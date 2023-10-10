@@ -1,6 +1,9 @@
+import numpy as np 
+
 import torch 
 import torch.nn as nn 
 
+from typing import Optional 
 
 class training_class:
     def __init__(self,
@@ -15,11 +18,15 @@ class training_class:
               n_epoches: int, 
               model_path: str,
               training_data_loader,
-              validation_data_loader):
+              validation_data_loader,
+              sigma_y: Optional[np.ndarray]=None):
         for epoch in range(1, n_epoches + 1):
             self.model.train()
-            for minibatch, (y, b) in enumerate(training_data_loader):
-                distribution_dict = self.model(y)
+            for minibatch, (y, FB, FC, RS) in enumerate(training_data_loader):
+                distribution_dict = self.model(y=y,
+                                               FB=FB,
+                                               FC=FC,
+                                               RS=RS)
                 training_loss = self.model.compute_loss(distribution_dict=distribution_dict)
                 
                 self.optimizer.zero_grad()
@@ -33,5 +40,5 @@ class training_class:
             
             self.model.eval()
             with torch.no_grad():
-                for (y,b) in validation_data_loader:
+                for (y, FB, FC, RS) in validation_data_loader:
                     pass 

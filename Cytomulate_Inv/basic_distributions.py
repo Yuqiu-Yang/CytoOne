@@ -175,6 +175,7 @@ class zero_inflated_positive_distribution(TorchDistribution):
         new._validate_args = self._validate_args
         return new
 
+
 class zero_inflated_gamma(zero_inflated_positive_distribution):
     arg_constraints = {
         #"concentration": constraints.positive,
