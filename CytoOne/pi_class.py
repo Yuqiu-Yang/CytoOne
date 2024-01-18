@@ -4,62 +4,77 @@ import torch.nn.functional as F
 from torch.distributions import Categorical, Independent
 from pyro.distributions import Delta 
 
+from CytoOne.base_class import component_base_class
 
-class p_pi_class(nn.Module):
-    def __init__(self,
-                 n_cell_types: int) -> None:
-        super().__init__()
-        
-        self.logit_p = nn.Parameter(torch.randn(1, n_cell_types),
-                                    requires_grad=True)
+import numpy as np 
+from collections import OrderedDict
 
-        self.distribution_dict = {"pi": None}
-    
-    def _update_distribution(self, 
-                             beta_pi_sample: torch.tensor,
-                             gamma_pi_sample: torch.tensor,
-                             FC: torch.tensor,
-                             RS: torch.tensor):
+
+class p_effect_pi_class(component_base_class):
+    def __init__(self):
+        super().__init__(stage_to_change="abundance effect estimation",
+                         distribution_info={"pi": None})
+
+    def _update_distributions(self, 
+                              FC: torch.tensor,
+                              RS: torch.tensor, 
+                              beta_sample: torch.tensor,
+                              gamma_sample: torch.tensor):
         
-        condition_effect = torch.einsum("nc, ck -> nk", FC, beta_pi_sample)
-        subject_effect = torch.einsum("ns, sk -> nk", RS, gamma_pi_sample)
-        logits = self.logit_p + condition_effect + subject_effect
+        logits = torch.matmul(FC, beta_sample) + torch.matmul(RS, gamma_sample)
         probs = F.softmax(logits, dim=1)
         self.distribution_dict['pi'] = Independent(Categorical(probs=probs),
                                                    reinterpreted_batch_ndims=0)
-    def get_sample(self):
-        result_dict = {"pi": None}
-        result_dict['pi'] = self.distribution_dict['pi'].sample()
-        return result_dict
-    
-    def forward(self, 
-                beta_pi_sample: torch.tensor,
-                gamma_pi_sample: torch.tensor,
-                FC: torch.tensor,
-                RS: torch.tensor):
-        self._update_distribution(beta_pi_sample=beta_pi_sample,
-                                  gamma_pi_sample=gamma_pi_sample,
-                                  FC=FC,
-                                  RS=RS)
+
+
+class p_pi_class(component_base_class):
+    def __init__(self, 
+                 n_cell_types: int,
+                 n_conditions: int=1,
+                 n_subjects: int=1) -> None:
+        super().__init__(stage_to_change="clustering", 
+                         distribution_info={"pi": None})
+        extra_n_dim = np.sum([n for n in [n_conditions, n_subjects] if n>1], dtype=int)
+        if extra_n_dim > 1:
+            self.in_dim = extra_n_dim
+        else:
+            self.in_dim = 1
+        self.logit_mapping = nn.Sequential(OrderedDict([
+            ('fc1', nn.Linear(in_features=self.in_dim,
+                              out_features=n_cell_types,
+                              bias=False))
+        ]))
         
-        return self.distribution_dict
+    def _update_distributions(self, 
+                              FC: torch.tensor,
+                              RS: torch.tensor):
+        if self.in_dim == 1:
+            effects = torch.ones((FC.shape[0], 1)) 
+        else:
+            extra_effect_list = [m for m in [FC, RS] if m.shape[1] > 1]
+            effects = torch.cat(extra_effect_list, dim=1)
+            
+        logits = self.logit_mapping(effects) 
+        probs = F.softmax(logits, dim=1)
+        self.distribution_dict['pi'] = Independent(Categorical(probs=probs),
+                                                   reinterpreted_batch_ndims=0)    
+        
 
-
-class q_pi_class(nn.Module):
+class q_pi_class(component_base_class):
     def __init__(self,
                  x_dim: int,
                  n_cell_types: int,
                  vq_vae_weight: float) -> None:
-        super().__init__()
-
+        super().__init__(stage_to_change="clustering", 
+                         distribution_info={"pi": None,
+                                            "embedding": None,
+                                            "vq_loss": None})
+        
         self.vq_vae_weight = vq_vae_weight
         self.cell_embeddings = nn.Embedding(num_embeddings=n_cell_types,
                                             embedding_dim=x_dim)
-        self.distribution_dict = {"pi": None,
-                                  "embedding": None,
-                                  "vq_loss": None}
-        
-    def _update_distribution(self, x):
+                    
+    def _update_distributions(self, x):
         # x**2 should be an N * x_dim tensor
         # After torch.sum with keepdim=True,
         # the resulting tensor should be N * 1
@@ -99,14 +114,8 @@ class q_pi_class(nn.Module):
                                                          reinterpreted_batch_ndims=0)
         self.distribution_dict['embedding'] = quantized_latents
         self.distribution_dict['vq_loss'] = vq_loss
-    
-    def get_sample(self):
-        result_dict = {"pi": None}
-        result_dict['pi'] = self.distribution_dict['pi'].sample()
-        return result_dict    
-    
-    def forward(self, x):
-        self._update_distribution(x=x)
-        return self.distribution_dict
-                        
+        self.distribution_dict['one_hot_encoding'] = one_hot_encoding
+
+
+               
                         
