@@ -132,3 +132,6 @@ dmypy.json
 
 /tests/
 /outdated_functions
+/experimental_functions
+/data/backup
+/supplementary_code

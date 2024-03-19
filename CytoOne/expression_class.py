@@ -33,10 +33,12 @@ class expression_model(model_base_class):
         self.p_z_w_coef = p_effect_z_w_coef_class(y_dim=y_dim,
                                                   n_batches=n_batches,
                                                   n_conditions=n_conditions,
+                                                  n_subjects=n_subjects,
                                                   n_cell_types=n_cell_types)
         self.q_z_w_coef = q_effect_z_w_coef_class(y_dim=y_dim,
                                                   n_batches=n_batches,
                                                   n_conditions=n_conditions,
+                                                  n_subjects=n_subjects,
                                                   n_cell_types=n_cell_types)
         self.p_z_w_hyper_coef = p_effect_z_w_hyper_coef_class(y_dim=y_dim)
         self.q_z_w_hyper_coef = q_effect_z_w_hyper_coef_class(y_dim=y_dim,

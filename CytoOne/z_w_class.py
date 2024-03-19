@@ -192,8 +192,10 @@ class p_z_w_class(component_base_class):
         x_with_effect = torch.cat([x]+ effect_list, dim=1)
         
         z_loc = self.mu_z_mapping(x_with_effect) 
+        # z_scale = torch.tensor(0.1, dtype=torch.float32)
         z_scale = F.softplus(self.log_Sigma_z_mapping(x_with_effect), beta=1) + 0.00001
         w_loc = self.mu_w_mapping(x_with_effect) 
+        # w_scale = torch.tensor(0.1, dtype=torch.float32)
         w_scale = F.softplus(self.log_Sigma_w_mapping(x_with_effect), beta=1) + 0.00001
         self.distribution_dict['z'] = Independent(Normal(loc=z_loc,
                                                          scale=z_scale),

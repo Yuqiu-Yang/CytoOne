@@ -115,7 +115,3 @@ class q_pi_class(component_base_class):
         self.distribution_dict['embedding'] = quantized_latents
         self.distribution_dict['vq_loss'] = vq_loss
         self.distribution_dict['one_hot_encoding'] = one_hot_encoding
-
-
-               
-                        

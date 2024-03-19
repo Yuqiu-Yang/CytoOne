@@ -8,10 +8,12 @@ from CytoOne.base_class import component_base_class
 
 class p_y_class(component_base_class):
     def __init__(self,
-                 y_dim: int=1) -> None:
+                 y_dim: int=1,
+                 y_scale: float=0.01) -> None:
         super().__init__(stage_to_change="pretrain",
                          distribution_info={"y": None})
         self.y_dim = y_dim
+        self.y_scale = y_scale
         self.reinterpreted_batch_ndims = 0
         if self.y_dim > 1:
             self.reinterpreted_batch_ndims = 1
@@ -27,7 +29,7 @@ class p_y_class(component_base_class):
         denoised_y = wq * z 
         
         self.distribution_dict['y'] = Independent(Normal(loc=denoised_y,
-                                                         scale=torch.tensor(0.1, dtype=torch.float32)),
+                                                         scale=torch.tensor(self.y_scale, dtype=torch.float32)),
                                                   reinterpreted_batch_ndims=self.reinterpreted_batch_ndims)
 
         

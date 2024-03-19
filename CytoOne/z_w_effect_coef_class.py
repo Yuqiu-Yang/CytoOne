@@ -159,5 +159,5 @@ class q_effect_z_w_hyper_coef_class(component_base_class):
             else:
                 self.distribution_dict[dist] = Independent(Normal(loc=self.parameter_dict[dist+'_loc'],
                                                                   scale=F.softplus(self.parameter_dict[dist+'_scale'], beta=1)+0.00001),
-                                                            reinterpreted_batch_ndims=len(self.dist_shape_dict[dist]))
+                                                            reinterpreted_batch_ndims=len(self.distribution_info_dict[dist]))
     

@@ -7,11 +7,12 @@ from CytoOne.base_class import model_base_class
 
 
 class pretrain_model(model_base_class):
-    def __init__(self) -> None:
+    def __init__(self,
+                 y_scale: float=0.001) -> None:
         super().__init__()
         self.p_z = p_pretrain_z_class()
         self.p_w = p_pretrain_w_class()
-        self.p_y = p_y_class()
+        self.p_y = p_y_class(y_scale=y_scale)
         self.q_z = q_pretrain_z_class()
         self.q_w = q_pretrain_w_class()
                

@@ -83,9 +83,9 @@ class abundance_model(model_base_class):
         kl_hyper_coef = kl_divergence(distribution_dict['q_pi_hyper_coef_dict']['eta'],
                                       distribution_dict['p_pi_hyper_coef_dict']['eta']).sum()
         kl_coef = 0 
-        for dist in distribution_dict['q_abundance_coef_dict']:
-            kl_coef += kl_divergence(distribution_dict['q_abundance_coef_dict'][dist],
-                                     distribution_dict['p_abundance_coef_dict'][dist]).sum()  
+        for dist in distribution_dict['q_pi_coef_dict']:
+            kl_coef += kl_divergence(distribution_dict['q_pi_coef_dict'][dist],
+                                     distribution_dict['p_pi_coef_dict'][dist]).sum()  
         
         elbo = reconstruction_error - kl_coef - kl_hyper_coef
         
