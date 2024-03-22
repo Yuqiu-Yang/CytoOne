@@ -1,23 +1,34 @@
+# PyTorch 
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F
 from torch.distributions import Normal, Independent
 
-from CytoOne.base_class import component_base_class
-
+# Data manipulation 
 import numpy as np 
 
+# For module construction 
 from collections import OrderedDict
 
+# Typing 
 from typing import Optional
+
+# Basic class 
+from CytoOne.base_class import component_base_class
 
 
 class p_pretrain_z_class(component_base_class):
-    def __init__(self) -> None:
+    def __init__(self,
+                 model_device: torch.device) -> None:
         super().__init__(stage_to_change='pretrain', 
                          distribution_info={'z': None})
-        self.loc = torch.tensor(0, dtype=torch.float32)
-        self.scale = torch.tensor(5, dtype=torch.float32)
+        self.model_device = model_device
+        self.loc = torch.tensor(0, 
+                                dtype=torch.float32,
+                                device=self.model_device)
+        self.scale = torch.tensor(5, 
+                                  dtype=torch.float32,
+                                  device=self.model_device)
 
     def _update_distributions(self):
         self.distribution_dict['z'] = Independent(Normal(loc=self.loc,
@@ -26,11 +37,17 @@ class p_pretrain_z_class(component_base_class):
 
    
 class p_pretrain_w_class(component_base_class):
-    def __init__(self) -> None:
+    def __init__(self,
+                 model_device: torch.device) -> None:
         super().__init__(stage_to_change='pretrain', 
                          distribution_info={'w': None})
-        self.loc = torch.tensor(0, dtype=torch.float32)
-        self.scale = torch.tensor(5, dtype=torch.float32)
+        self.model_device = model_device
+        self.loc = torch.tensor(0, 
+                                dtype=torch.float32,
+                                device=self.model_device)
+        self.scale = torch.tensor(5, 
+                                  dtype=torch.float32,
+                                  device=self.model_device)
 
     def _update_distributions(self):
         self.distribution_dict['w'] = Independent(Normal(loc=self.loc,
@@ -39,9 +56,11 @@ class p_pretrain_w_class(component_base_class):
 
 
 class p_effect_z_w_class(component_base_class):
-    def __init__(self):
+    def __init__(self,
+                 model_device: torch.device):
         super().__init__(stage_to_change="expression effect estimation",
                          distribution_info={'z_w': None})
+        self.model_device = model_device
         
     def _update_distributions(self,
                               one_hot_index: torch.tensor,
@@ -80,13 +99,14 @@ class p_effect_z_w_class(component_base_class):
                     torch.matmul(FC_theta, beta_theta_scale_sample) 
 
         self.distribution_dict['z_w'] = Independent(Normal(loc=loc,
-                                                         scale=F.softplus(log_scale, beta=1) + 0.00001),
+                                                           scale=F.softplus(log_scale, beta=1) + 0.00001),
                                                   reinterpreted_batch_ndims=1)
         
 
 
 class p_z_w_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int,
                  x_dim: int,
                  n_batches: int=1,
@@ -95,7 +115,7 @@ class p_z_w_class(component_base_class):
         super().__init__(stage_to_change="dimension reduction",
                          distribution_info={"z": None,
                                             "w": None})
-        
+        self.model_device = model_device
         extra_n_dim = np.sum([n for n in [n_batches, n_conditions, n_subjects] if n>1], dtype=int)
         self.mu_z_mapping = nn.Sequential(OrderedDict([
             ('fc1', nn.Linear(in_features=x_dim + extra_n_dim,
@@ -207,9 +227,11 @@ class p_z_w_class(component_base_class):
 
 class q_pretrain_z_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int=1) -> None:
         super().__init__(stage_to_change='pretrain', 
                          distribution_info={'z': None})
+        self.model_device = model_device
         self.y_dim = y_dim
         self.reinterpreted_batch_ndims = 0
         if self.y_dim > 1:
@@ -269,9 +291,11 @@ class q_pretrain_z_class(component_base_class):
     
 class q_pretrain_w_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int=1) -> None:
         super().__init__(stage_to_change='pretrain', 
                          distribution_info={'w': None})
+        self.model_device = model_device
         self.y_dim = y_dim
         self.reinterpreted_batch_ndims = 0
         if self.y_dim > 1:
@@ -331,17 +355,22 @@ class q_pretrain_w_class(component_base_class):
 
 class q_z_w_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int) -> None:
         super().__init__(stage_to_change="pretrain",
                          distribution_info={"z": None,
                                             "w": None})
+        self.model_device = model_device
         self.y_dim = y_dim
-        self.q_z = q_pretrain_z_class(y_dim=y_dim)
-        self.q_w = q_pretrain_w_class(y_dim=y_dim)
+        self.q_z = q_pretrain_z_class(model_device=self.model_device,
+                                      y_dim=y_dim)
+        self.q_w = q_pretrain_w_class(model_device=self.model_device,
+                                      y_dim=y_dim)
     
     def load_pretrained_model(self,
                               model_check_point_path: str) -> None:
-        ckpt = torch.load(model_check_point_path)
+        ckpt = torch.load(model_check_point_path,
+                          map_location=self.model_device)
         model_dict = self.state_dict()
 
         # 1. filter out unnecessary keys

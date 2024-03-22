@@ -13,7 +13,9 @@ from typing import Union, Optional
 
 class p_x_class(component_base_class):
     def __init__(self, 
+                 model_device: torch.device,
                  x_dim: int) -> None:
+        self.model_device = model_device
         self.x_dim = x_dim
         super().__init__(stage_to_change="dimension reduction",
                          distribution_info={"x": None})
@@ -21,23 +23,28 @@ class p_x_class(component_base_class):
     def _update_distributions(self,
                               embedding: Optional[torch.tensor]=None):
         if embedding is None:
-            self.distribution_dict["x"] = Independent(Normal(loc=torch.zeros(self.x_dim),
-                                                             scale=torch.ones(self.x_dim)), 
+            self.distribution_dict["x"] = Independent(Normal(loc=torch.zeros(self.x_dim,
+                                                                             device=self.model_device),
+                                                             scale=torch.ones(self.x_dim,
+                                                                             device=self.model_device)), 
                                                         reinterpreted_batch_ndims=1) 
         else: 
             self.distribution_dict["x"] = Independent(Normal(loc=embedding,
-                                                              scale=torch.ones(self.x_dim)), 
+                                                              scale=torch.ones(self.x_dim,
+                                                                               device=self.model_device)), 
                                                         reinterpreted_batch_ndims=1) 
         
     
         
 class q_x_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int,
                  x_dim: int,
                  n_batches: int=1,
                  n_conditions: int=1,
                  n_subjects: int=1) -> None:
+        self.model_device = model_device
         self.x_dim = x_dim
         super().__init__(stage_to_change="dimension reduction",
                          distribution_info={"x": None})
@@ -91,7 +98,12 @@ class q_x_class(component_base_class):
                               FB: torch.tensor,
                               FC: torch.tensor,
                               RS: torch.tensor):
-        z_w = (z+w)/2
+        # z_w = (z+w)/2
+        w_temp = torch.round(F.sigmoid(w))
+        wq = w + (w_temp - w).detach()
+        
+        z = torch.exp(z)
+        z_w = wq * z 
         
         effect_list = [m for m in [FB, FC, RS] if m.shape[1] > 1]
         

@@ -9,6 +9,7 @@ from CytoOne.base_class import component_base_class
 
 class p_effect_z_w_coef_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int,
                  n_batches: int,
                  n_conditions: int,
@@ -27,6 +28,7 @@ class p_effect_z_w_coef_class(component_base_class):
                                             "theta_scale": (n_cell_types, y_dim),
                                             "alpha_theta_scale": (n_batches*n_cell_types, y_dim),
                                             "beta_theta_scale": (n_conditions*n_cell_types, y_dim)})
+        self.model_device = model_device
         
         self.y_dim = y_dim
         self.n_batches = n_batches
@@ -45,26 +47,35 @@ class p_effect_z_w_coef_class(component_base_class):
             if (self.distribution_info_dict[dist][0] == 1) or \
                (("_theta_" in dist) and (self.distribution_info_dict[dist][0] == self.n_cell_types)) or \
                (("_theta_" in dist) and (self.n_cell_types == 1)):
-                self.distribution_dict[dist] = Independent(Delta(v=torch.zeros(self.distribution_info_dict[dist]),
-                                                                 log_density=torch.ones(self.distribution_info_dict[dist])),
+                self.distribution_dict[dist] = Independent(Delta(v=torch.zeros(self.distribution_info_dict[dist],
+                                                                               device=self.model_device),
+                                                                 log_density=torch.ones(self.distribution_info_dict[dist],
+                                                                                        device=self.model_device)),
                                                            reinterpreted_batch_ndims=len(self.distribution_info_dict[dist]))
             else:
                 if dist == "gamma_loc":
-                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist]),
-                                                                      scale=torch.ones(self.distribution_info_dict[dist])*gamma_loc_scale),
+                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist],
+                                                                                      device=self.model_device),
+                                                                      scale=torch.ones(self.distribution_info_dict[dist],
+                                                                                       device=self.model_device)*gamma_loc_scale),
                                                                reinterpreted_batch_ndims=len(self.distribution_info_dict[dist])) 
                 elif dist == "gamma_scale":
-                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist]),
-                                                                      scale=torch.ones(self.distribution_info_dict[dist])*gamma_scale_scale),
+                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist],
+                                                                                      device=self.model_device),
+                                                                      scale=torch.ones(self.distribution_info_dict[dist],
+                                                                                       device=self.model_device)*gamma_scale_scale),
                                                                reinterpreted_batch_ndims=len(self.distribution_info_dict[dist])) 
                 else:
-                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist]),
-                                                                      scale=torch.ones(self.distribution_info_dict[dist])),
+                    self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist],
+                                                                                      device=self.model_device),
+                                                                      scale=torch.ones(self.distribution_info_dict[dist],
+                                                                                       device=self.model_device)),
                                                                reinterpreted_batch_ndims=len(self.distribution_info_dict[dist]))
         
 
 class q_effect_z_w_coef_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int,
                  n_batches: int,
                  n_conditions: int,
@@ -83,7 +94,7 @@ class q_effect_z_w_coef_class(component_base_class):
                                             "theta_scale": (n_cell_types, y_dim),
                                             "alpha_theta_scale": (n_batches*n_cell_types, y_dim),
                                             "beta_theta_scale": (n_conditions*n_cell_types, y_dim)})
-    
+        self.model_device = model_device
         self.y_dim = y_dim
         self.n_batches = n_batches
         self.n_conditions = n_conditions
@@ -106,8 +117,10 @@ class q_effect_z_w_coef_class(component_base_class):
             if (self.distribution_info_dict[dist][0] == 1) or \
                (("_theta_" in dist) and (self.distribution_info_dict[dist][0] == self.n_cell_types)) or \
                (("_theta_" in dist) and (self.n_cell_types == 1)):
-                self.distribution_dict[dist] = Independent(Delta(v=torch.zeros(self.distribution_info_dict[dist]),
-                                                                 log_density=torch.ones(self.distribution_info_dict[dist])),
+                self.distribution_dict[dist] = Independent(Delta(v=torch.zeros(self.distribution_info_dict[dist],
+                                                                               device=self.model_device),
+                                                                 log_density=torch.ones(self.distribution_info_dict[dist],
+                                                                                        device=self.model_device)),
                                                            reinterpreted_batch_ndims=len(self.distribution_info_dict[dist]))
             else:
                 self.distribution_dict[dist] = Independent(Normal(loc=self.parameter_dict[dist+'_loc'],
@@ -117,28 +130,32 @@ class q_effect_z_w_coef_class(component_base_class):
 
 class p_effect_z_w_hyper_coef_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int):
         super().__init__(stage_to_change = "expression effect estimation",
                          distribution_info={"loc_eta": (1, y_dim),
                                             "scale_eta": (1, y_dim)})
-        
+        self.model_device = model_device
         self.y_dim = y_dim
         
     def _update_distributions(self):
         for dist in self.distribution_dict:
-            self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist]),
-                                                              scale=torch.ones(self.distribution_info_dict[dist])),
+            self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist],
+                                                                              device=self.model_device),
+                                                              scale=torch.ones(self.distribution_info_dict[dist],
+                                                                               device=self.model_device)),
                                                        reinterpreted_batch_ndims=2)
         
         
 class q_effect_z_w_hyper_coef_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  y_dim: int,
                  n_subjects: int):
         super().__init__(stage_to_change = "expression effect estimation",
                          distribution_info={"loc_eta": (1, y_dim),
                                             "scale_eta": (1, y_dim)})
-        
+        self.model_device = model_device
         self.y_dim = y_dim
         self.n_subjects = n_subjects
         self.parameter_dict = nn.ParameterDict({})
@@ -153,8 +170,10 @@ class q_effect_z_w_hyper_coef_class(component_base_class):
     def _update_distributions(self):
         for dist in self.distribution_dict:
             if self.n_subjects == 1:
-                self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist]),
-                                                                  scale=torch.ones(self.distribution_info_dict[dist])),
+                self.distribution_dict[dist] = Independent(Normal(loc=torch.zeros(self.distribution_info_dict[dist],
+                                                                                  device=self.model_device),
+                                                                  scale=torch.ones(self.distribution_info_dict[dist],
+                                                                                   device=self.model_device)),
                                                            reinterpreted_batch_ndims=2)
             else:
                 self.distribution_dict[dist] = Independent(Normal(loc=self.parameter_dict[dist+'_loc'],

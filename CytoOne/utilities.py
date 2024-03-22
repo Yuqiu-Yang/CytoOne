@@ -181,8 +181,10 @@ def data_curation(user_data: Union[pd.DataFrame, str],
     
 def generate_cytoone_model_input(meta_dict: dict,
                                  x_dim: int, 
+                                 y_scale: float,
                                  n_cell_types: int,
-                                 model_check_point_path: Optional[str]=None) -> dict:
+                                 model_check_point_path: Optional[str]=None,
+                                 model_device: Optional[Union[str, torch.device]]=None) -> dict:
     """Generate model input for CytoOne 
 
     By using the meta information we extracted from the data, the functions 
@@ -194,25 +196,38 @@ def generate_cytoone_model_input(meta_dict: dict,
         A dictionary containing meta information of the data
     x_dim : int
         Dimensions of the latent space
+    y_scale: float
+        The scale for the noise added to y
     n_cell_types : int
         Number of cell clusters 
     model_check_point_path : Optional[str], optional
         The path to the pretrained model. If none, random weights are used, by default None
-
+    model_device: Optional[Union[str, torch.device]]
+        The device to use 
     Returns
     -------
     dict
         A dictionary of the model input 
     """
     
+    if model_device is None:
+        model_device = torch.device(
+            'cuda:0' if torch.cuda.is_available() else 'cpu')
+    elif isinstance(model_device, str):
+        model_device = torch.device(model_device)
+    else:
+        model_device = model_device
+    
     parameter_dict = {
         "y_dim": meta_dict['y_dim'],
         "x_dim": x_dim,
+        "y_scale": y_scale,
         "n_batches": meta_dict['n_batches'],
         "n_conditions": meta_dict['n_conditions'],
         "n_subjects": meta_dict['n_subjects'],
         "n_cell_types": n_cell_types,
-        "model_check_point_path": model_check_point_path
+        "model_check_point_path": model_check_point_path,
+        "model_device": model_device
     }
     
     return parameter_dict

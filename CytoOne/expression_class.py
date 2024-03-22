@@ -8,6 +8,7 @@ from CytoOne.z_w_effect_coef_class import p_effect_z_w_coef_class, p_effect_z_w_
 
 from CytoOne.base_class import model_base_class
 
+from typing import Optional, Union
 
 class expression_model(model_base_class):
     def __init__(self,
@@ -16,11 +17,20 @@ class expression_model(model_base_class):
                  n_conditions: int,
                  n_subjects: int,
                  n_cell_types: int,
-                 effect_type: str):
+                 effect_type: str,
+                 model_device: Optional[Union[str, torch.device]]=None):
         super().__init__()
         
         assert (n_cell_types > 1) or (n_batches > 1) or (n_conditions > 1) or (n_subjects > 1), "You need to have at least 2 cell types or 2 batches or 2 conditions or 2 subjects to estimate some effects."
         assert effect_type in ["expression", "inflation"], "Illegal type..."
+        
+        if model_device is None:
+            self.model_device = torch.device(
+                'cuda:0' if torch.cuda.is_available() else 'cpu')
+        elif isinstance(model_device, str):
+            self.model_device = torch.device(model_device)
+        else:
+            self.model_device = model_device
         
         self.y_dim = y_dim
         self.n_batches = n_batches
@@ -29,19 +39,23 @@ class expression_model(model_base_class):
         self.n_cell_types = n_cell_types
         self.effect_type = effect_type
         
-        self.p_z_w = p_effect_z_w_class()
-        self.p_z_w_coef = p_effect_z_w_coef_class(y_dim=y_dim,
+        self.p_z_w = p_effect_z_w_class(model_device=self.model_device)
+        self.p_z_w_coef = p_effect_z_w_coef_class(model_device=self.model_device,
+                                                  y_dim=y_dim,
                                                   n_batches=n_batches,
                                                   n_conditions=n_conditions,
                                                   n_subjects=n_subjects,
                                                   n_cell_types=n_cell_types)
-        self.q_z_w_coef = q_effect_z_w_coef_class(y_dim=y_dim,
+        self.q_z_w_coef = q_effect_z_w_coef_class(model_device=self.model_device,
+                                                  y_dim=y_dim,
                                                   n_batches=n_batches,
                                                   n_conditions=n_conditions,
                                                   n_subjects=n_subjects,
                                                   n_cell_types=n_cell_types)
-        self.p_z_w_hyper_coef = p_effect_z_w_hyper_coef_class(y_dim=y_dim)
-        self.q_z_w_hyper_coef = q_effect_z_w_hyper_coef_class(y_dim=y_dim,
+        self.p_z_w_hyper_coef = p_effect_z_w_hyper_coef_class(model_device=self.model_device,
+                                                              y_dim=y_dim)
+        self.q_z_w_hyper_coef = q_effect_z_w_hyper_coef_class(model_device=self.model_device,
+                                                              y_dim=y_dim,
                                                               n_subjects=n_subjects)
         
         
@@ -101,7 +115,9 @@ class expression_model(model_base_class):
                 "log_likelihood": log_likelihood
             }
     
-    def compute_loss(self, distribution_dict):
+    def compute_loss(self,
+                     distribution_dict: dict,
+                     show_details: bool=False):
         reconstruction_error = distribution_dict['log_likelihood'].sum()
         
         kl_hyper_coef = 0
@@ -115,6 +131,11 @@ class expression_model(model_base_class):
                                     distribution_dict['p_z_w_coef_dict'][dist]).sum()
         
         elbo = reconstruction_error - kl_coef - kl_hyper_coef
-        
+        if show_details:
+            print("="*25)
+            print("likelihood is {}, kl_coef is {}, kl_hyper_coef is {}".format(reconstruction_error,
+                                                                                kl_coef,
+                                                                                kl_hyper_coef))
+            print("="*25)
         return -elbo
 

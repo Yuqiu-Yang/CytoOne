@@ -11,10 +11,12 @@ from collections import OrderedDict
 
 
 class p_effect_pi_class(component_base_class):
-    def __init__(self):
+    def __init__(self,
+                 model_device: torch.device):
         super().__init__(stage_to_change="abundance effect estimation",
                          distribution_info={"pi": None})
-
+        self.model_device = model_device
+        
     def _update_distributions(self, 
                               FC: torch.tensor,
                               RS: torch.tensor, 
@@ -29,11 +31,13 @@ class p_effect_pi_class(component_base_class):
 
 class p_pi_class(component_base_class):
     def __init__(self, 
+                 model_device: torch.device,
                  n_cell_types: int,
                  n_conditions: int=1,
                  n_subjects: int=1) -> None:
         super().__init__(stage_to_change="clustering", 
                          distribution_info={"pi": None})
+        self.model_device = model_device
         extra_n_dim = np.sum([n for n in [n_conditions, n_subjects] if n>1], dtype=int)
         if extra_n_dim > 1:
             self.in_dim = extra_n_dim
@@ -49,7 +53,8 @@ class p_pi_class(component_base_class):
                               FC: torch.tensor,
                               RS: torch.tensor):
         if self.in_dim == 1:
-            effects = torch.ones((FC.shape[0], 1)) 
+            effects = torch.ones((FC.shape[0], 1),
+                                 device=self.model_device) 
         else:
             extra_effect_list = [m for m in [FC, RS] if m.shape[1] > 1]
             effects = torch.cat(extra_effect_list, dim=1)
@@ -62,6 +67,7 @@ class p_pi_class(component_base_class):
 
 class q_pi_class(component_base_class):
     def __init__(self,
+                 model_device: torch.device,
                  x_dim: int,
                  n_cell_types: int,
                  vq_vae_weight: float) -> None:
@@ -69,7 +75,7 @@ class q_pi_class(component_base_class):
                          distribution_info={"pi": None,
                                             "embedding": None,
                                             "vq_loss": None})
-        
+        self.model_device = model_device
         self.vq_vae_weight = vq_vae_weight
         self.cell_embeddings = nn.Embedding(num_embeddings=n_cell_types,
                                             embedding_dim=x_dim)

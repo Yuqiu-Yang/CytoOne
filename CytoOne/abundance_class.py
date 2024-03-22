@@ -9,31 +9,46 @@ from CytoOne.pi_effect_coef_class import p_effect_pi_coef_class, p_effect_pi_hyp
 
 from CytoOne.base_class import model_base_class
 
+from typing import Optional, Union
+
 
 class abundance_model(model_base_class):
     def __init__(self,
                  n_conditions: int,
                  n_subjects: int,
-                 n_cell_types: int):
+                 n_cell_types: int,
+                 model_device: Optional[Union[str, torch.device]]=None):
         super().__init__()
         
         assert (n_cell_types > 1), "The number of cell types has to be > 1. Otherwise, there is nothing to estimate."
         assert (n_conditions > 1) or (n_subjects > 1), "You need to have at least 2 conditions or 2 subjects to estimate some effects."
 
+        if model_device is None:
+            self.model_device = torch.device(
+                'cuda:0' if torch.cuda.is_available() else 'cpu')
+        elif isinstance(model_device, str):
+            self.model_device = torch.device(model_device)
+        else:
+            self.model_device = model_device
+
         self.n_conditions = n_conditions
         self.n_subjects = n_subjects
         self.n_cell_types = n_cell_types
         
-        self.p_pi = p_effect_pi_class()
-        self.p_pi_coef = p_effect_pi_coef_class(n_conditions=n_conditions,
+        self.p_pi = p_effect_pi_class(model_device=self.model_device)
+        self.p_pi_coef = p_effect_pi_coef_class(model_device=self.model_device,
+                                                n_conditions=n_conditions,
                                                 n_subjects=n_subjects,
                                                 n_cell_types=n_cell_types)
-        self.p_pi_hyper_coef = p_effect_pi_hyper_coef_class(n_subjects=n_subjects,
+        self.p_pi_hyper_coef = p_effect_pi_hyper_coef_class(model_device=self.model_device,
+                                                            n_subjects=n_subjects,
                                                             n_cell_types=n_cell_types)
-        self.q_pi_coef = q_effect_pi_coef_class(n_conditions=n_conditions,
+        self.q_pi_coef = q_effect_pi_coef_class(model_device=self.model_device,
+                                                n_conditions=n_conditions,
                                                 n_subjects=n_subjects,
                                                 n_cell_types=n_cell_types)
-        self.q_pi_hyper_coef = q_effect_pi_hyper_coef_class(n_subjects=n_subjects,
+        self.q_pi_hyper_coef = q_effect_pi_hyper_coef_class(model_device=self.model_device,
+                                                            n_subjects=n_subjects,
                                                             n_cell_types=n_cell_types)
         
     def _update_distributions(self, 
@@ -77,7 +92,9 @@ class abundance_model(model_base_class):
                 "log_likelihood": log_likelihood
             }
     
-    def compute_loss(self, distribution_dict):
+    def compute_loss(self, 
+                     distribution_dict: dict,
+                     show_details: bool=False):
         reconstruction_error = distribution_dict['log_likelihood'].sum()
 
         kl_hyper_coef = kl_divergence(distribution_dict['q_pi_hyper_coef_dict']['eta'],
@@ -88,5 +105,12 @@ class abundance_model(model_base_class):
                                      distribution_dict['p_pi_coef_dict'][dist]).sum()  
         
         elbo = reconstruction_error - kl_coef - kl_hyper_coef
+        
+        if show_details:
+            print("="*25)
+            print("likelihood is {}, kl_coef is {}, kl_hyper_coef is {}".format(reconstruction_error,
+                                                                                kl_coef,
+                                                                                kl_hyper_coef))
+            print("="*25)
         
         return -elbo

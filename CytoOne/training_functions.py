@@ -9,85 +9,85 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 # Typing 
-from typing import Optional
+from typing import Optional, Union
 
 
 class dataset_class(Dataset):
     def __init__(self, 
+                 model_device: torch.device,
                  df: pd.DataFrame,
-                 meta_dict: Optional[dict]=None,
-                 return_cell_types: bool=False) -> None:
+                 meta_dict: Optional[dict]=None) -> None:
         """Dataset class for all subsequent models 
         
         
-
         Parameters
         ----------
         df : pd.DataFrame
             A curated CyTOF dataframe  
         meta_dict : Optional[dict], optional
             _description_, by default None
-        return_cell_types : bool, optional
-            _description_, by default False
         """
         super().__init__()
         
+        self.model_device = model_device 
         self.data_type = None
         
         if meta_dict is None:
             self.data_type = "pretrain"
             self.y = torch.tensor(df[['y']].values, dtype=torch.float32)
         else:
-            if return_cell_types:
-                self.data_type = "post training"
-            else:
-                self.data_type = "training"
+            self.data_type = "post-pretraining"
             self.y = torch.tensor(df[meta_dict['protein_col_names']].values, dtype=torch.float32)
             
             b = torch.tensor(df['batch_index'].values, dtype=torch.int64).unsqueeze(1)
             c = torch.tensor(df['condition_index'].values, dtype=torch.int64).unsqueeze(1)
             s = torch.tensor(df['subject_index'].values, dtype=torch.int64).unsqueeze(1)
-            self.type_index = torch.tensor(df['cell_type_index'].values, dtype=torch.int64).unsqueeze(1)
+            theta = torch.tensor(df['cell_type_index'].values, dtype=torch.int64).unsqueeze(1)
             
             self.FB = torch.zeros(meta_dict['N'], meta_dict['n_batches'])
             self.FC = torch.zeros(meta_dict['N'], meta_dict['n_conditions'])
             self.RS = torch.zeros(meta_dict['N'], meta_dict['n_subjects'])
+            self.Theta = torch.zeros(meta_dict['N'], meta_dict['n_types'])
             
             self.FB.scatter_(1, b, 1)
             self.FC.scatter_(1, c, 1)
             self.RS.scatter_(1, s, 1)
+            self.Theta.scatter_(1, theta, 1)
     
     def __len__(self) -> int:
         return self.y.shape[0]
     
     def __getitem__(self, index) -> dict:
         if self.data_type == "pretrain":
-            return {"y": self.y[index, :]}
-        elif self.data_type == "training":
-            return {"y": self.y[index, :], 
-                    "FB": self.FB[index, :],
-                    "FC": self.FC[index, :], 
-                    "RS": self.RS[index, :]}
+            return {"y": self.y[index, :].to(self.model_device)}
         else:
-            return {"y": self.y[index, :], 
-                    "FB": self.FB[index, :],
-                    "FC": self.FC[index, :], 
-                    "RS": self.RS[index, :],
-                    "types": self.type_index[index, :]}
+            return {"y": self.y[index, :].to(self.model_device), 
+                    "FB": self.FB[index, :].to(self.model_device),
+                    "FC": self.FC[index, :].to(self.model_device), 
+                    "RS": self.RS[index, :].to(self.model_device)}, {"Theta": self.Theta[index, :].to(self.model_device)}
 
 
 def generate_dataloader(df: pd.DataFrame,
                         meta_dict: Optional[dict]=None,
+                        model_device: Optional[Union[str, torch.device]]=None,
                         batch_size: int=256,
                         shuffle: bool=True) -> DataLoader:
+    if model_device is None:
+        model_device = torch.device(
+            'cuda:0' if torch.cuda.is_available() else 'cpu')
+    elif isinstance(model_device, str):
+        model_device = torch.device(model_device)
+    else:
+        model_device = model_device
     
-    dataset = dataset_class(df=df,
+    dataset = dataset_class(model_device=model_device,
+                            df=df,
                             meta_dict=meta_dict)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
 def training_loop(model,
-                  optimizer,
+                  optimizer: torch.optim.Optimizer,
                   scheduler, 
                   n_epoches: int,
                   train_dataloader: DataLoader,
@@ -97,7 +97,9 @@ def training_loop(model,
                   training_stage: str,
                   save_every_epoch: bool=False,
                   print_every_n_minibatch: int=10,
-                  cytoone_model=None) -> None:
+                  cytoone_model: Optional[torch.nn.Module]=None,
+                  use_true_cell_types: bool=True,
+                  show_details: bool=False) -> None:
 
     model._update_stage(stage=training_stage)
     
@@ -105,12 +107,13 @@ def training_loop(model,
     for epoch in range(1, n_epoches + 1):
         # First train on 
         model.train()
-        for minibatch, data in enumerate(train_dataloader):
+        for minibatch, (data, one_hot_index) in enumerate(train_dataloader):
             if training_stage in ["pretrain", "dimension reduction", "clustering"]:
                 distribution_dict = model(**data) 
             else:
                 (_, _, q_pi_dict, z_w_samples, _) = cytoone_model.get_posterior_samples(**data)
-                one_hot_index = q_pi_dict['one_hot_encoding']
+                if not use_true_cell_types:
+                    one_hot_index = q_pi_dict['one_hot_encoding']
                 z = z_w_samples['z']
                 w = z_w_samples['w']
                 if training_stage == "abundance effect estimation":
@@ -135,7 +138,8 @@ def training_loop(model,
                 else: 
                     raise RuntimeError("Illegal training stage")  
                 
-            training_loss = model.compute_loss(distribution_dict=distribution_dict)
+            training_loss = model.compute_loss(distribution_dict=distribution_dict,
+                                               show_details=show_details)
 
             optimizer.zero_grad()
             training_loss.backward()
@@ -150,12 +154,13 @@ def training_loop(model,
         model.eval()
         total_val_loss = 0.0
         with torch.no_grad():
-            for data in val_dataloader:
+            for (data, one_hot_index) in val_dataloader:
                 if training_stage in ["pretrain", "dimension reduction", "clustering"]:
                     val_distributions_dict = model(**data) 
                 else:
                     (_, _, q_pi_dict, z_w_samples, _) = cytoone_model.get_posterior_samples(**data)
-                    one_hot_index = q_pi_dict['one_hot_encoding']
+                    if not use_true_cell_types:
+                        one_hot_index = q_pi_dict['one_hot_encoding']
                     z = z_w_samples['z']
                     w = z_w_samples['w']
                     if training_stage == "abundance effect estimation":
@@ -179,7 +184,8 @@ def training_loop(model,
                             raise RuntimeError("Illegal training stage") 
                     else: 
                         raise RuntimeError("Illegal training stage")  
-                validation_loss = model.compute_loss(distribution_dict=val_distributions_dict)
+                validation_loss = model.compute_loss(distribution_dict=val_distributions_dict,
+                                                     show_details=show_details)
                 total_val_loss += validation_loss.item()
             
             if save_every_epoch:

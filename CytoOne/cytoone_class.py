@@ -18,12 +18,22 @@ class cytoone_model(model_base_class):
     def __init__(self,
                  y_dim: int,
                  x_dim: int, 
+                 y_scale: float,
                  n_batches: int,
                  n_conditions: int,
                  n_subjects: int,
                  n_cell_types: int,
-                 model_check_point_path: Optional[str]=None) -> None:
+                 model_check_point_path: Optional[str]=None,
+                 model_device: Optional[Union[str, torch.device]]=None) -> None:
         super().__init__()
+        
+        if model_device is None:
+            self.model_device = torch.device(
+                'cuda:0' if torch.cuda.is_available() else 'cpu')
+        elif isinstance(model_device, str):
+            self.model_device = torch.device(model_device)
+        else:
+            self.model_device = model_device
         
         self.n_batches = n_batches
         self.n_conditions = n_conditions
@@ -32,36 +42,47 @@ class cytoone_model(model_base_class):
         self.x_dim = x_dim
         self.current_stage = None
         
-        self.p_y = p_y_class(y_dim=y_dim)
-        self.p_z_w = p_z_w_class(y_dim=y_dim,
+        self.p_y = p_y_class(model_device=self.model_device,
+                             y_dim=y_dim,
+                             y_scale=y_scale)
+        self.p_z_w = p_z_w_class(model_device=self.model_device,
+                                 y_dim=y_dim,
                                  x_dim=x_dim,
                                  n_batches=n_batches,
                                  n_conditions=n_conditions,
                                  n_subjects=n_subjects)
-        self.q_z_w = q_z_w_class(y_dim=y_dim)
+        self.q_z_w = q_z_w_class(model_device=self.model_device,
+                                 y_dim=y_dim)
         if model_check_point_path is not None:
             self.q_z_w.load_pretrained_model(model_check_point_path=model_check_point_path)
             
-        self.p_x = p_x_class(x_dim=x_dim)
-        self.q_x = q_x_class(y_dim=y_dim,
+        self.p_x = p_x_class(model_device=self.model_device,
+                             x_dim=x_dim)
+        self.q_x = q_x_class(model_device=self.model_device,
+                             y_dim=y_dim,
                              x_dim=x_dim,
                              n_batches=n_batches,
                              n_conditions=n_conditions,
                              n_subjects=n_subjects)
                 
-        self.p_pi = p_pi_class(n_cell_types=n_cell_types,
+        self.p_pi = p_pi_class(model_device=self.model_device,
+                               n_cell_types=n_cell_types,
                                n_conditions=n_conditions,
                                n_subjects=n_subjects)
-        self.q_pi = q_pi_class(x_dim=x_dim,
+        self.q_pi = q_pi_class(model_device=self.model_device,
+                               x_dim=x_dim,
                                n_cell_types=n_cell_types,
                                vq_vae_weight=0.25)
         
     def initialize_pi_distributions(self,
                                     n_cell_types: int):
         self.n_cell_types = n_cell_types
-        self.p_pi = p_pi_class(n_cell_types=n_cell_types,
-                               n_conditions=self.n_conditions)
-        self.q_pi = q_pi_class(x_dim=self.x_dim,
+        self.p_pi = p_pi_class(model_device=self.model_device,
+                               n_cell_types=n_cell_types,
+                               n_conditions=self.n_conditions,
+                               n_subjects=self.n_subjects)
+        self.q_pi = q_pi_class(model_device=self.model_device,
+                               x_dim=self.x_dim,
                                n_cell_types=n_cell_types,
                                vq_vae_weight=0.25)
 
@@ -255,7 +276,8 @@ class cytoone_model(model_base_class):
         return y_samples
             
     def compute_loss(self, 
-                     distribution_dict: dict):
+                     distribution_dict: dict,
+                     show_details: bool=False):
         reconstruction_error = distribution_dict['log_likelihood'].mean()
         
         kl_x = kl_divergence(distribution_dict['q_x_dict']['x'],
@@ -273,5 +295,13 @@ class cytoone_model(model_base_class):
         local_kl = - kl_x - kl_z - kl_w - kl_pi
 
         elbo = reconstruction_error + local_kl
-        
+        if show_details:
+            print("="*25)
+            print("likelihood is {}, kl_x is {}, kl_z is {}, kl_w is {}, kl_pi is {} vq_loss is {}".format(reconstruction_error,
+                                                                                                           kl_x,
+                                                                                                           kl_z,
+                                                                                                           kl_w,
+                                                                                                           kl_pi,
+                                                                                                           vq_loss))
+            print("="*25)
         return -elbo + vq_loss
