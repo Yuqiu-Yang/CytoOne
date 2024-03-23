@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CytoOne"
+dynamic = ["version"]
+authors = [
+  { name="Yuqiu Yang", email="yuqiuy@mail.smu.edu" },
+]
+description = "A unified probabilistic framework for CyTOF data"
+readme = "README.md"
+requires-python = ">=3.9,<3.11"
+dependencies = []
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD 3-Clause License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/Yuqiu-Yang/CytoOne"
+Issues = "https://github.com/Yuqiu-Yang/CytoOne/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "CytoOne.__version__"}
