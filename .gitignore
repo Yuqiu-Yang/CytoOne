@@ -131,7 +131,7 @@ dmypy.json
 .DS_Store
 
 /tests/
-/outdated_functions
+# /outdated_functions
 /experimental_functions
 /data/backup
 /supplementary_code
