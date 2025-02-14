@@ -104,7 +104,7 @@ class abundance_model(model_base_class):
             kl_coef += kl_divergence(distribution_dict['q_pi_coef_dict'][dist],
                                      distribution_dict['p_pi_coef_dict'][dist]).sum()  
         
-        elbo = reconstruction_error - kl_coef - kl_hyper_coef
+        elbo = reconstruction_error - 0* kl_coef - 0*kl_hyper_coef
         
         if show_details:
             print("="*25)

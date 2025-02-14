@@ -114,6 +114,8 @@ def training_loop(model,
                 (_, _, q_pi_dict, z_w_samples, _) = cytoone_model.get_posterior_samples(**data)
                 if not use_true_cell_types:
                     one_hot_index = q_pi_dict['one_hot_encoding']
+                else:
+                    one_hot_index = one_hot_index['Theta']
                 z = z_w_samples['z']
                 w = z_w_samples['w']
                 if training_stage == "abundance effect estimation":
@@ -161,6 +163,8 @@ def training_loop(model,
                     (_, _, q_pi_dict, z_w_samples, _) = cytoone_model.get_posterior_samples(**data)
                     if not use_true_cell_types:
                         one_hot_index = q_pi_dict['one_hot_encoding']
+                    else:
+                        one_hot_index = one_hot_index['Theta']
                     z = z_w_samples['z']
                     w = z_w_samples['w']
                     if training_stage == "abundance effect estimation":
