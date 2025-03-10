@@ -20,7 +20,56 @@ from torch.nn.functional import softplus
 # Pyro 
 from pyro.distributions import TorchDistribution
 from pyro.distributions.util import broadcast_shape
+from pyro.distributions import Gamma as pyro_Gamma
 from pyro.distributions import LogNormal as pyro_LogNormal
+
+
+class mollified_uniform(TorchDistribution):
+    arg_constraints = {'uniform_low': constraints.real,
+                       'uniform_up': constraints.real,
+                       'normal_scale': constraints.positive}
+    support = constraints.real
+    has_rsample = True
+
+    def __init__(self, uniform_low, uniform_up, normal_scale, *, validate_args=None):
+        self.uniform_low, self.uniform_up, self.normal_scale = broadcast_all(uniform_low, uniform_up, normal_scale)
+        super().__init__(self.uniform_low.shape, validate_args=validate_args)
+
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(mollified_uniform, _instance)
+        batch_shape = torch.Size(batch_shape)
+        new.uniform_low = self.uniform_low.expand(batch_shape)
+        new.uniform_up = self.uniform_up.expand(batch_shape)
+        new.normal_scale = self.normal_scale.expand(batch_shape)
+        super(mollified_uniform, new).__init__(batch_shape, validate_args=False)
+        new._validate_args = self._validate_args
+        return new 
+    
+    def log_prob(self, value, offset=0.01):
+        if self._validate_args:
+            self._validate_sample(value) 
+        denum = self.uniform_up - self.uniform_low
+        upper_cdf = 0.5 * (1 + torch.erf((self.uniform_up - value) * self.normal_scale.reciprocal() / math.sqrt(2)))
+        lower_cdf = 0.5 * (1 + torch.erf((self.uniform_low - value) * self.normal_scale.reciprocal() / math.sqrt(2)))
+        return ((upper_cdf - lower_cdf) * denum.reciprocal() + offset).log()
+        #return torch.asinh((upper_cdf - lower_cdf) * denum.reciprocal()) - 1
+
+    def rsample(self, sample_shape=torch.Size()):
+        shape = self._extended_shape(sample_shape)
+        # Sample from standard uniform first 
+        rand = torch.rand(shape, dtype=self.uniform_low.dtype, device=self.uniform_low.device)
+        u = rand * (self.uniform_up - self.uniform_low) + self.uniform_low
+        eps = _standard_normal(shape, dtype=self.normal_scale.dtype, device=self.normal_scale.device)
+        return u + eps * self.normal_scale
+    
+    @property
+    def mean(self):
+        return (self.uniform_up + self.uniform_low)/2
+
+    @property
+    def variance(self):
+        temp = self.uniform_up + self.uniform_low
+        return temp.pow(2)/12 + self.normal_scale.pow(2)
 
 
 class zero_inflated_positive_distribution(TorchDistribution):
@@ -125,6 +174,26 @@ class zero_inflated_positive_distribution(TorchDistribution):
         )
         new._validate_args = self._validate_args
         return new
+
+
+class zero_inflated_gamma(zero_inflated_positive_distribution):
+    arg_constraints = {
+        #"concentration": constraints.positive,
+        #"rate": constraints.positive,
+        "gate": constraints.unit_interval,
+        "gate_logits": constraints.real,
+    }
+    support = constraints.greater_than_eq(0)
+
+    def __init__(self, concentration, rate, *, 
+                 gate=None, gate_logits=None, validate_args=None):
+        base_dist = pyro_Gamma(concentration=concentration, 
+                          rate=rate, validate_args=False)
+        base_dist._validate_args = validate_args
+
+        super().__init__(
+            base_dist, gate=gate, gate_logits=gate_logits, validate_args=validate_args
+        )
 
 
 class zero_inflated_lognormal(zero_inflated_positive_distribution):
