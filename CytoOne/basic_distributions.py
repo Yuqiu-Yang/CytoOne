@@ -20,7 +20,7 @@ from torch.nn.functional import softplus
 # Pyro 
 from pyro.distributions import TorchDistribution
 from pyro.distributions.util import broadcast_shape
-from pyro.distributions import LogNormal as pyro_LogNormal
+from pyro.distributions import LogNormal
 
 
 class zero_inflated_positive_distribution(TorchDistribution):
@@ -138,7 +138,7 @@ class zero_inflated_lognormal(zero_inflated_positive_distribution):
 
     def __init__(self, loc, scale, *, 
                  gate=None, gate_logits=None, validate_args=None):
-        base_dist = pyro_LogNormal(loc=loc, 
+        base_dist = LogNormal(loc=loc, 
                           scale=scale, validate_args=False)
         base_dist._validate_args = validate_args
 

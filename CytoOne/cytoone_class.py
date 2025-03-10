@@ -3,142 +3,72 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class VADEEncoder(nn.Module):
-    """
-    Encoder network for VADE (Variational Deep Embedding)
-    """
-    def __init__(self, input_dim, latent_dim, hidden_dims=[512, 256]):
-        super().__init__()
-        
-        # Build encoder layers
-        modules = []
-        
-        # Input layer
-        modules.append(nn.Sequential(
-            nn.Linear(input_dim, hidden_dims[0]),
-            nn.BatchNorm1d(hidden_dims[0]),
-            nn.LeakyReLU()
-        ))
-        
-        # Hidden layers
-        for i in range(len(hidden_dims)-1):
-            modules.append(nn.Sequential(
-                nn.Linear(hidden_dims[i], hidden_dims[i+1]),
-                nn.BatchNorm1d(hidden_dims[i+1]),
-                nn.LeakyReLU()
-            ))
-        
-        self.encoder = nn.Sequential(*modules)
-        
-        # Mean and log variance projections
-        self.mu = nn.Linear(hidden_dims[-1], latent_dim)
-        self.log_var = nn.Linear(hidden_dims[-1], latent_dim)
-        
-    def forward(self, x):
-        # Get encoder output
-        x = self.encoder(x)
-        
-        # Get mean and log variance
-        mu = self.mu(x)
-        log_var = self.log_var(x)
-        
-        return mu, log_var
-
-
-class VADEDecoder(nn.Module):
-    """
-    Decoder network for VADE
-    """
-    def __init__(self, latent_dim, output_dim, hidden_dims=[256, 512]):
-        super().__init__()
-        
-        # Build decoder layers
-        modules = []
-        
-        # Input layer
-        modules.append(nn.Sequential(
-            nn.Linear(latent_dim, hidden_dims[0]),
-            nn.BatchNorm1d(hidden_dims[0]),
-            nn.LeakyReLU()
-        ))
-        
-        # Hidden layers
-        for i in range(len(hidden_dims)-1):
-            modules.append(nn.Sequential(
-                nn.Linear(hidden_dims[i], hidden_dims[i+1]),
-                nn.BatchNorm1d(hidden_dims[i+1]),
-                nn.LeakyReLU()
-            ))
-        
-        self.decoder = nn.Sequential(*modules)
-        
-        # Mean and log variance projections
-        self.mu = nn.Linear(hidden_dims[-1], output_dim)
-        self.log_var = nn.Linear(hidden_dims[-1], output_dim)
-
-    def forward(self, z):
-        # Get encoder output
-        z = self.decoder(z)
-        
-        # Get mean and log variance
-        mu = self.mu(z)
-        log_var = self.log_var(z)
-
-        return mu, log_var
-
-
-class Discriminator(nn.Module):
-    """
-    Discriminator network for StarGAN component
-    """
-    def __init__(self, input_dim, n_batch, hidden_dims=[512, 256, 128]):
-        super().__init__()
-        
-        # Feature extraction layers
-        layers = []
-        
-        # Input layer
-        layers.append(nn.Sequential(
-            nn.Linear(input_dim, hidden_dims[0]),
-            nn.LeakyReLU(0.2)
-        ))
-        
-        # Hidden layers
-        for i in range(len(hidden_dims)-1):
-            layers.append(nn.Sequential(
-                nn.Linear(hidden_dims[i], hidden_dims[i+1]),
-                nn.LeakyReLU(0.2)
-            ))
-        
-        self.main = nn.Sequential(*layers)
-        
-        # Source classification (real/fake)
-        self.src = nn.Linear(hidden_dims[-1], 1)
-        
-        # Domain classification
-        self.cls = nn.Linear(hidden_dims[-1], n_batch)
-        
-    def forward(self, x):
-        features = self.main(x)
-        src_out = self.src(features)
-        cls_out = self.cls(features)
-        return src_out, cls_out
-    
-
+from CytoOne.generator import encoder, decoder
 
 
 
 
 
 class cytoone(nn.Module):
-    def __init__(self):
+    def __init__(self,
+                 input_dim,
+                 latent_dim: int=10,
+                 encoder_hidden_dims=[500, 500, 2000],
+                 decoder_hidden_dims=[2000, 500, 500],
+                 n_clusters: int=20):
         super().__init__()
 
-    
-        self.domain_embedding = nn.Embedding(n_batch, 8)
+        self.encoder = encoder(input_dim=input_dim,
+                               latent_dim=latent_dim,
+                               hidden_dims=encoder_hidden_dims)
+        self.decoder = decoder(output_dim=input_dim,
+                               latent_dim=latent_dim,
+                               hidden_dims=decoder_hidden_dims)
+        self.n_clusters = n_clusters
+        self.latent_dim = latent_dim
+        self.pi = nn.Parameter(torch.ones(n_clusters) / n_clusters, requires_grad=True)
+        self.mu_c = nn.Parameter(torch.zeros(n_clusters, latent_dim), requires_grad=True)
+        self.log_var_c = nn.Parameter(torch.zeros(n_clusters, latent_dim), requires_grad=True)
+        # self.domain_embedding = nn.Embedding(n_batch, 8)
 
 
     def reparameterize(self, mu, log_var):
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         return mu + eps * std
+
+    def forward(self, x):
+        mu_z, log_var_z = self.encoder(x)
+        z = self.reparameterize(mu=mu_z,
+                                log_var=log_var_z)
+
+        mu_x, log_var_x = self.decoder(z)
+        x_recon = self.reparameterize(mu=mu_x,
+                                      log_var=log_var_x)
+    
+    def compute_gamma(self, z, mu, log_var):
+        """
+        Compute the posterior probability of z belonging to each cluster
+        """
+        batch_size = z.size(0)
+        
+        # Compute log p(z|c) for all c
+        z_mu = z.unsqueeze(1) - self.mu_c.unsqueeze(0)  # [batch_size, n_clusters, latent_dim]
+        log_var_c = self.log_var_c.unsqueeze(0).expand(batch_size, -1, -1)  # [batch_size, n_clusters, latent_dim]
+        
+        # Compute log p(z|c) = log N(z; mu_c, var_c)
+        logpzc = -0.5 * torch.sum(
+            log_var_c + torch.pow(z_mu, 2) / torch.exp(log_var_c),
+            dim=2
+        )  # [batch_size, n_clusters]
+        
+        # Add log p(c) = log pi_c
+        logpc = torch.log(F.softmax(self.pi, dim=0) + 1e-10)
+        logpzc += logpc.unsqueeze(0)  # [batch_size, n_clusters]
+        
+        # Compute gamma = p(c|z) using softmax
+        gamma = F.softmax(logpzc, dim=1)  # [batch_size, n_clusters]
+        
+        return gamma    
+
+
