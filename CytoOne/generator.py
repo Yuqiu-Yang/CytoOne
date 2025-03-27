@@ -5,7 +5,8 @@ import torch.nn.functional as F
 
 class encoder(nn.Module):
     def __init__(self, 
-                 input_dim,
+                 input_dim: int,
+                 batch_embedding_dim: int=8, 
                  latent_dim: int=10,
                  hidden_dims=[500, 500, 2000]):
         super().__init__()
@@ -15,7 +16,7 @@ class encoder(nn.Module):
         
         # Input layer
         modules.append(nn.Sequential(
-            nn.Linear(input_dim, hidden_dims[0]),
+            nn.Linear(input_dim + batch_embedding_dim, hidden_dims[0]),
             nn.BatchNorm1d(hidden_dims[0]),
             nn.LeakyReLU()
         ))
@@ -34,7 +35,12 @@ class encoder(nn.Module):
         self.mu = nn.Linear(hidden_dims[-1], latent_dim)
         self.log_var = nn.Linear(hidden_dims[-1], latent_dim)
         
-    def forward(self, x):
+    def forward(self, x, 
+                batch_index, 
+                batch_embedding):
+        if batch_embedding is not None:
+            batch_emb = batch_embedding(batch_index)
+            x = torch.cat([x, batch_emb], dim=1)
         # Get encoder output
         x = self.encoder(x)
         
@@ -47,7 +53,8 @@ class encoder(nn.Module):
 
 class decoder(nn.Module):
     def __init__(self,
-                 output_dim,
+                 output_dim: int,
+                 batch_embedding_dim: int=8, 
                  latent_dim: int=10,
                  hidden_dims=[2000, 500, 500]):
         super().__init__()
@@ -57,7 +64,7 @@ class decoder(nn.Module):
         
         # Input layer
         modules.append(nn.Sequential(
-            nn.Linear(latent_dim, hidden_dims[0]),
+            nn.Linear(latent_dim+batch_embedding_dim, hidden_dims[0]),
             nn.BatchNorm1d(hidden_dims[0]),
             nn.LeakyReLU()
         ))
@@ -76,7 +83,12 @@ class decoder(nn.Module):
         self.mu = nn.Linear(hidden_dims[-1], output_dim)
         self.log_var = nn.Linear(hidden_dims[-1], output_dim)
 
-    def forward(self, z):
+    def forward(self, z, 
+                batch_index, 
+                batch_embedding):
+        if batch_embedding is not None:
+            batch_emb = batch_embedding(batch_index)
+            z = torch.cat([z, batch_emb], dim=1)
         # Get encoder output
         z = self.decoder(z)
         
