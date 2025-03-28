@@ -5,12 +5,14 @@ import pandas as pd
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F
+from torch import optim
 
 from sklearn.mixture import GaussianMixture
-from CytoOne.utilities import import_data
-from CytoOne.generator import encoder, decoder
+from CytoOne.utilities import import_data, generate_strata, load_stratum
+from CytoOne.generator import generator
 from CytoOne.discriminator import discriminator, latent_discriminator
 
+from tqdm.auto import tqdm 
 from typing import Optional, Union
 
 
@@ -26,7 +28,8 @@ class cytoone(nn.Module):
                  decoder_hidden_dims=[2000, 500, 500],
                  discriminator_hidden_dims=[512, 256, 128],
                  latent_discriminator_hidden_dims=[512, 256, 128],
-                 n_clusters: int=20):
+                 n_clusters: int=20,
+                 model_device: Optional[Union[str, torch.device]] = None):
         super().__init__()
 
         self.import_data_par = {"batch_index_col": batch_index_col,
@@ -44,12 +47,28 @@ class cytoone(nn.Module):
         self.decoder_hidden_dims = decoder_hidden_dims
         self.discriminator_hidden_dims = discriminator_hidden_dims
         self.latent_discriminator_hidden_dims = latent_discriminator_hidden_dims
+        # Set model device
+        if model_device is None:
+            self.model_device = torch.device(
+                'cuda' if torch.cuda.is_available() else 'cpu')
+        elif isinstance(model_device, str):
+            self.model_device = torch.device(model_device)
+        else:
+            self.model_device = model_device
 
-        self.pi_c = nn.Parameter(torch.ones(n_clusters) / n_clusters, requires_grad=True)
-        self.mu_c = nn.Parameter(torch.zeros(n_clusters, latent_dim), requires_grad=True)
-        self.log_var_c = nn.Parameter(torch.zeros(n_clusters, latent_dim), requires_grad=True)
+        self.pi_c = None
+        self.mu_c = None
+        self.log_var_c = None
         
+        self.generator = None
+        self.discriminator = None
+        self.latent_discriminator = None
+        self.optimizer_G = None
+        
+        self.optimizer_D = None
         self.batch_embedding = None
+
+        self.n_critic = 10
 
     def import_data(self,
                     cell_by_gene: Union[str, pd.DataFrame],
@@ -60,91 +79,121 @@ class cytoone(nn.Module):
         self.input_dim = self.adata.uns["n_genes"]
         self.n_batches = self.adata.uns['n_batches']
 
-        self.encoder = encoder(input_dim=self.input_dim,
-                               latent_dim=self.latent_dim,
-                               hidden_dims=self.encoder_hidden_dims)
-        self.decoder = decoder(output_dim=self.input_dim,
-                               latent_dim=self.latent_dim,
-                               hidden_dims=self.decoder_hidden_dims)
+        if self.n_batches == 1:
+            self.n_critic = 1
+
+        self.pi_c = nn.Parameter(torch.ones(self.n_clusters) / self.n_clusters, requires_grad=True)
+        self.mu_c = nn.Parameter(torch.zeros(self.n_clusters, self.latent_dim), requires_grad=True)
+        self.log_var_c = nn.Parameter(torch.zeros(self.n_clusters, self.latent_dim), requires_grad=True)
+
+        self.generator = generator(input_dim=self.input_dim,
+                                   output_dim=self.input_dim,
+                                   batch_embedding_dim=self.batch_embedding_dim,
+                                   latent_dim=self.latent_dim,
+                                   encoder_hidden_dims=self.encoder_hidden_dims,
+                                   decoder_hidden_dims=self.decoder_hidden_dims)
+        self.optimizer_G = optim.Adam([{'params': self.generator.parameters()},
+                                       {'params': self.pi_c.parameters()},
+                                       {'params': self.mu_c.parameters()},
+                                       {'params': self.log_var_c.parameters()}], lr=1e-3)
+
         if self.n_batches > 1:
             self.batch_embedding = nn.Embedding(self.n_batches, self.batch_embedding_dim)
-        
-        self.discriminator = discriminator(input_dim=self.input_dim,
-                                           n_batches=self.n_batches,
-                                           hidden_dims=self.discriminator_hidden_dims)
-        self.latent_discriminator = latent_discriminator(input_dim=self.latent_dim,
-                                                         n_batches=self.n_batches,
-                                                         hidden_dims=self.latent_discriminator_hidden_dims)
+            self.discriminator = discriminator(input_dim=self.input_dim,
+                                            n_batches=self.n_batches,
+                                            hidden_dims=self.discriminator_hidden_dims)
+            self.latent_discriminator = latent_discriminator(input_dim=self.latent_dim,
+                                                            n_batches=self.n_batches,
+                                                            hidden_dims=self.latent_discriminator_hidden_dims)
+            self.optimizer_D = optim.Adam([{'params': self.discriminator.parameters()},
+                                            {'params': self.latent_discriminator.parameters()}], lr=1e-3)
 
-    def reparameterize(self, mu, log_var):
-        std = torch.exp(0.5 * log_var)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def forward(self, x, source_batch_index, target_batch_index):
-        mu_z, log_var_z = self.encoder(x=x, 
-                                       batch_index=source_batch_index,
-                                       batch_embedding=self.batch_embedding)
-        z = self.reparameterize(mu=mu_z,
-                                log_var=log_var_z)
-
-        mu_x, log_var_x = self.decoder(z=z,
-                                       batch_index=source_batch_index,
-                                       batch_embedding=self.batch_embedding)
-        
-        mu_x_target, log_var_x_target = self.decoder(z=z,
-                                                     batch_index=target_batch_index,
-                                                     batch_embedding=self.batch_embedding)
-        x_target = self.reparameterize(mu=mu_x_target,
-                                       log_var=log_var_x_target)
-        
-        mu_z_target, log_var_z_target = self.encoder(x=x_target, 
-                                                    batch_index=target_batch_index,
-                                                    batch_embedding=self.batch_embedding)
-        z_target = self.reparameterize(mu=mu_z_target,
-                                        log_var=log_var_z_target)
-        
-        mu_x_recon, log_var_x_recon = self.decoder(z=z_target,
-                                                     batch_index=source_batch_index,
-                                                     batch_embedding=self.batch_embedding)
-        x_recon = self.reparameterize(mu=mu_x_recon,
-                                       log_var=log_var_x_recon)
-
-        return x, mu_x, log_var_x, z, mu_z, log_var_z,\
-              x_target, mu_x_target, log_var_x_target, \
-              z_target, mu_z_target, log_var_z_target, \
-              x_recon, mu_x_recon, log_var_x_recon
-
-
-    def loss_function(self, x, mu_x, log_var_x, z, mu_z, log_var_z,\
-                        x_target, mu_x_target, log_var_x_target, \
-                        z_target, mu_z_target, log_var_z_target, \
-                        x_recon, mu_x_recon, log_var_x_recon):
-        log_likelihood = torch.mean(self.diag_gaussian_log_prob(x=x, mu=mu_x, log_var=log_var_x))
-
-        gamma_c = self.compute_gamma_c(z=z)
-        gamma_c_target = self.compute_gamma_c(z=z_target)
-
-
-
-
-        kl_z = 0.5 * torch.sum((self.mu_c.unsqueeze(0)-mu_z.unsqueeze(1)).pow(2)/torch.exp(self.log_var_c.unsqueeze(0)) + \
-                     torch.exp(log_var_z.unsqueeze(1)-self.log_var_c.unsqueeze(0)) + self.log_var_c.unsqueeze(0), dim=2)
-        kl_z = torch.sum(gamma_c * kl_z, dim=1)
-
-        kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
-
-        kl_c = torch.mean(torch.sum(torch.log(gamma_c/self.pi_c.unsqueeze(0)+1e-20) * gamma_c, dim=1))
-
-        return -log_likelihood + kl_z + kl_c
+        self.to(self.model_device)
 
 
     def training_loop(self,
                       n_epoches: int):
         self.train()
         for epoch in range(n_epoches):
-            
-            pass 
+            adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100)
+            for minibatch in range(100):
+                cell_by_gene_counts, source_batch_index, target_batch_index = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
+                                                                                            stratum_id=minibatch,
+                                                                                            model_device=self.model_device)
+                if self.n_batches > 1:                    
+                    cell_by_gene_counts_target, z, _, _, _, _ = self.generator(x=cell_by_gene_counts,
+                                                                            source_batch_index=source_batch_index,
+                                                                            target_batch_index=target_batch_index,
+                                                                            batch_embedding=self.batch_embedding)
+                    # Train discriminator 
+                    self.optimizer_D.zero_grad()
+
+                    real_validity, pred_cls = self.discriminator(cell_by_gene_counts)
+                    fake_validity, _ = self.discriminator(cell_by_gene_counts_target.detach())
+
+                    loss_D_adv = -torch.mean(real_validity) + torch.mean(fake_validity)
+
+                    loss_D_cls = F.cross_entropy(pred_cls, source_batch_index, reduction='mean')
+
+                    latent_pred_cls = self.latent_discriminator(z.detach()) 
+
+                    loss_lD_cls = F.cross_entropy(latent_pred_cls, source_batch_index, reduction='mean')
+                    
+                    loss_D = loss_D_adv + loss_D_cls + loss_lD_cls
+
+                    loss_D.backward()
+                    self.optimizer_D.step()
+
+                self.optimizer_G.zero_grad()
+
+                if minibatch % self.n_critic == 0:
+                    cell_by_gene_counts_target, z, mu_z, log_var_z, mu_x, log_var_x = self.generator(x=cell_by_gene_counts,
+                                                                                                    source_batch_index=source_batch_index,
+                                                                                                    target_batch_index=target_batch_index,
+                                                                                                    batch_embedding=self.batch_embedding,
+                                                                                                    compute_source=True)
+                    gamma_c = self.compute_gamma_c(z=z)
+                    loss_G_adv = 0
+                    loss_G_cls = 0 
+                    loss_G_recon = 0 
+                    loss_G_l_recon = 0 
+                    loss_anchor = 0
+
+                    if self.n_batches > 1:
+                        cell_by_gene_counts_recon, z_recon, _, _, _, _ = self.generator(x=cell_by_gene_counts_target,
+                                                                            source_batch_index=target_batch_index,
+                                                                            target_batch_index=source_batch_index,
+                                                                            compute_source=False)
+                        
+                        fake_validity, pred_cls = self.discriminator(cell_by_gene_counts_target)
+                        loss_G_adv = -torch.mean(fake_validity)
+                        loss_G_cls = F.cross_entropy(pred_cls, target_batch_index, reduction='mean')
+
+                        loss_G_recon = nn.L1Loss(cell_by_gene_counts, cell_by_gene_counts_recon)
+                        loss_G_l_recon = nn.L1Loss(z, z_recon)
+
+                    
+                        gamma_c_recon = self.compute_gamma_c(z=z_recon)
+                    
+                        loss_anchor = 0.5 * torch.mean(torch.sum(torch.log(gamma_c/gamma_c_recon+1e-20) * gamma_c, dim=1)) + \
+                                        0.5 * torch.mean(torch.sum(torch.log(gamma_c_recon/gamma_c+1e-20) * gamma_c_recon, dim=1))
+                    
+                    log_likelihood = torch.mean(self.diag_gaussian_log_prob(x=cell_by_gene_counts, 
+                                                                            mu=mu_x, 
+                                                                            log_var=log_var_x))
+                    kl_z = 0.5 * torch.sum((self.mu_c.unsqueeze(0)-mu_z.unsqueeze(1)).pow(2)/torch.exp(self.log_var_c.unsqueeze(0)) + \
+                                torch.exp(log_var_z.unsqueeze(1)-self.log_var_c.unsqueeze(0)) + self.log_var_c.unsqueeze(0), dim=2)
+                    kl_z = torch.sum(gamma_c * kl_z, dim=1)
+
+                    kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
+
+                    kl_c = torch.mean(torch.sum(torch.log(gamma_c/self.pi_c.unsqueeze(0)+1e-20) * gamma_c, dim=1))
+                    loss_vi = -log_likelihood + kl_z + kl_c
+                    
+                    loss_G = loss_vi + loss_G_adv + loss_G_cls + loss_G_recon + loss_G_l_recon + loss_anchor
+
+                    loss_G.backward()
+                    self.optimizer_G.step()
 
 
     def compute_gamma_c(self, z):
@@ -164,7 +213,6 @@ class cytoone(nn.Module):
             G.append(self.diag_gaussian_log_prob(x=x, mu=mu_c[c:c+1, :], log_var=log_var_c[c:c+1,:]).view(-1,1))
         return torch.cat(G, dim=1)
 
-
     def diag_gaussian_log_prob(self, x, mu, log_var):
         # x size batch_size * dim
         # mu/log_var size 1 * dim or batch_size * dim 
@@ -176,58 +224,63 @@ class cytoone(nn.Module):
         if  not os.path.exists('./pretrain_model.pk'):
 
             Loss=nn.MSELoss()
-            opti=Adam(itertools.chain(self.encoder.parameters(),self.decoder.parameters()))
+            opti=optim.Adam({'params': self.generator.parameters()},
+                            lr=1e-3)
 
             print('Pretraining......')
-            epoch_bar=tqdm(range(pre_epoch))
-            for _ in epoch_bar:
+            adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100, batch_index=0)
+
+            for minibatch in tqdm(range(100)):
                 L=0
-                for x,y in dataloader:
-                    if self.args.cuda:
-                        x=x.cuda()
+                cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
+                                                                                            stratum_id=minibatch,
+                                                                                            model_device=self.model_device)
+                _, _, _, _, mu_x, _ = self.generator(x=cell_by_gene_counts,
+                                                    source_batch_index=source_batch_index,
+                                                    target_batch_index=None,
+                                                    batch_embedding=self.batch_embedding,
+                                                    compute_source=True)
 
-                    z,_=self.encoder(x)
-                    x_=self.decoder(z)
-                    loss=Loss(x,x_)
+                
+                loss=Loss(cell_by_gene_counts, mu_x)
 
-                    L+=loss.detach().cpu().numpy()
+                L+=loss.detach().cpu().numpy()
 
-                    opti.zero_grad()
-                    loss.backward()
-                    opti.step()
+                opti.zero_grad()
+                loss.backward()
+                opti.step()
 
-                epoch_bar.write('L2={:.4f}'.format(L/len(dataloader)))
-
-            self.encoder.log_sigma2_l.load_state_dict(self.encoder.mu_l.state_dict())
+            self.generator.encoder.log_var.load_state_dict(self.generator.encoder.mu.state_dict())
+            self.generator.decoder.log_var.load_state_dict(self.generator.decoder.mu.state_dict())
 
             Z = []
-            Y = []
             with torch.no_grad():
-                for x, y in dataloader:
-                    if self.args.cuda:
-                        x = x.cuda()
+                for minibatch in tqdm(range(100)):
+                    cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
+                                                                                stratum_id=minibatch,
+                                                                                model_device=self.model_device)
 
-                    z1, z2 = self.encoder(x)
-                    assert F.mse_loss(z1, z2) == 0
-                    Z.append(z1)
-                    Y.append(y)
+                    _, _, mu_z, log_var_z, mu_x, log_var_x = self.generator(x=cell_by_gene_counts,
+                                                                            source_batch_index=source_batch_index,
+                                                                            target_batch_index=None,
+                                                                            batch_embedding=self.batch_embedding,
+                                                                            compute_source=True)
+                    assert F.mse_loss(mu_z, log_var_z) == 0
+                    assert F.mse_loss(mu_x, log_var_x) == 0
+                    Z.append(mu_z)
 
             Z = torch.cat(Z, 0).detach().cpu().numpy()
-            Y = torch.cat(Y, 0).detach().numpy()
 
-            gmm = GaussianMixture(n_components=self.args.nClusters, covariance_type='diag')
+            gmm = GaussianMixture(n_components=self.n_clusters, covariance_type='diag')
 
             pre = gmm.fit_predict(Z)
-            print('Acc={:.4f}%'.format(cluster_acc(pre, Y)[0] * 100))
 
-            self.pi_.data = torch.from_numpy(gmm.weights_).cuda().float()
-            self.mu_c.data = torch.from_numpy(gmm.means_).cuda().float()
-            self.log_sigma2_c.data = torch.log(torch.from_numpy(gmm.covariances_).cuda().float())
+            self.pi_c.data = torch.tensor(gmm.weights_, dtype=torch.float32, device=self.model_device)
+            self.mu_c.data = torch.tensor(gmm.means_, dtype=torch.float32, device=self.model_device)
+            self.log_var_c.data = torch.log(torch.tensor(gmm.covariances_, dtype=torch.float32, device=self.model_device))
 
             torch.save(self.state_dict(), './pretrain_model.pk')
 
         else:
-
-
             self.load_state_dict(torch.load('./pretrain_model.pk')) 
     

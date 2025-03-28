@@ -15,7 +15,8 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
                 batch_index_col: Optional[str]=None,
                 celltype_col: Optional[str]=None,
                 normalize: bool=True,
-                cofactor: float=5.0):
+                cofactor: float=5.0,
+                dr: bool=False):
     
     if isinstance(cell_metadata, str) and ("csv" in os.path.splitext(cell_metadata)[1]):
         cell_meta = pd.read_csv(cell_metadata, index_col=0)
@@ -69,13 +70,22 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
             # For sparse matrices
             adata.X = adata.X.toarray()
             adata.X = np.arcsinh(adata.X / cofactor)
+    if dr:
+        sc.pp.pca(adata)
+        sc.pp.neighbors(adata)    
+        sc.tl.umap(adata)
 
     return adata 
 
 
-def generate_strata(adata, n_splits: int=100):
+def generate_strata(adata, 
+                    n_splits: int=100,
+                    batch_index: Optional[int]=None):
     adata_w_batch = adata.to_df().copy()
     adata_w_batch['batch_index'] = adata.obs['batch_index'].copy()
+    if batch_index is not None:
+        adata_w_batch = adata_w_batch.loc[adata_w_batch['batch_index']==batch_index, :]
+        
     adata_w_batch = adata_w_batch.groupby(['batch_index'], observed=True, as_index=True).apply(lambda x: x.sample(frac=1, replace=False),
                                                             include_groups=False)
     adata_w_batch.reset_index(drop=False, names=['batch_index', "id_to_drop"], inplace=True)
@@ -94,7 +104,7 @@ def generate_strata(adata, n_splits: int=100):
     adata_w_batch_strata = pd.concat(split_result).reset_index(drop=True)
     return adata_w_batch_strata
 
-def load_stratum(adata_w_batch_strata, stratum_id, model_device):
+def load_stratum(adata_w_batch_strata, stratum_id, model_device='cpu'):
     cell_patch = adata_w_batch_strata.loc[adata_w_batch_strata['stratum'] == stratum_id, :]
     source_batch_index = torch.tensor(cell_patch['batch_index'], dtype=torch.int64, device=model_device)
     target_batch_index = torch.tensor(np.random.permutation(cell_patch['batch_index'].values), dtype=torch.int64, device=model_device)

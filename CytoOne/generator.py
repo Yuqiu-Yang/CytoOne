@@ -97,3 +97,50 @@ class decoder(nn.Module):
         log_var = self.log_var(z)
 
         return mu, log_var
+    
+class generator(nn.Module):
+    def __init__(self,
+                 input_dim: int,
+                 output_dim: int,
+                 batch_embedding_dim: int=8, 
+                 latent_dim: int=10,
+                 encoder_hidden_dims=[500, 500, 2000],
+                 decoder_hidden_dims=[2000, 500, 500]) :
+        super().__init__()
+
+        self.encoder = encoder(input_dim=input_dim,
+                               batch_embedding_dim=batch_embedding_dim,
+                               latent_dim=latent_dim,
+                               hidden_dims=encoder_hidden_dims)
+        self.decoder = decoder(output_dim=output_dim,
+                               batch_embedding_dim=batch_embedding_dim,
+                               latent_dim=latent_dim,
+                               hidden_dims=decoder_hidden_dims)
+    def reparameterize(self, mu, log_var):
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+    
+    def forward(self, x, source_batch_index, target_batch_index, batch_embedding, compute_source):
+        mu_z, log_var_z = self.encoder(x=x, 
+                                    batch_index=source_batch_index,
+                                    batch_embedding=batch_embedding)
+        z = self.reparameterize(mu=mu_z,
+                                log_var=log_var_z)
+        
+        mu_x = None
+        log_var_x = None
+        if compute_source:
+            mu_x, log_var_x = self.decoder(z=z,
+                                        batch_index=source_batch_index,
+                                        batch_embedding=batch_embedding)
+        if (batch_embedding is not None) and (target_batch_index is not None):
+            mu_x_target, log_var_x_target = self.decoder(z=z,
+                                                        batch_index=target_batch_index,
+                                                        batch_embedding=batch_embedding)
+            
+            x_target = self.reparameterize(mu=mu_x_target,
+                                        log_var=log_var_x_target)
+        
+
+        return x_target, z, mu_z, log_var_z, mu_x, log_var_x
