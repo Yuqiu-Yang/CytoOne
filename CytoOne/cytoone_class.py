@@ -21,7 +21,6 @@ class cytoone(nn.Module):
                  batch_index_col: Optional[str]=None,
                  celltype_col: Optional[str]=None,
                  normalize: bool=True,
-                 cofactor: float=5.0,
                  latent_dim: int=10,
                  batch_embedding_dim: int=8, 
                  encoder_hidden_dims=[500, 500, 2000],
@@ -34,8 +33,7 @@ class cytoone(nn.Module):
 
         self.import_data_par = {"batch_index_col": batch_index_col,
                                 "celltype_col": celltype_col,
-                                "normalize": normalize,
-                                "cofactor": cofactor}
+                                "normalize": normalize}
         self.adata = None
         self.input_dim = None
         self.n_batches = None
@@ -63,8 +61,8 @@ class cytoone(nn.Module):
         self.generator = None
         self.discriminator = None
         self.latent_discriminator = None
+
         self.optimizer_G = None
-        
         self.optimizer_D = None
         self.batch_embedding = None
 
@@ -82,7 +80,7 @@ class cytoone(nn.Module):
         if self.n_batches == 1:
             self.n_critic = 1
 
-        self.pi_c = nn.Parameter(torch.ones(self.n_clusters) / self.n_clusters, requires_grad=True)
+        self.logit_pi_c = nn.Parameter(torch.zeros(self.n_clusters), requires_grad=True)
         self.mu_c = nn.Parameter(torch.zeros(self.n_clusters, self.latent_dim), requires_grad=True)
         self.log_var_c = nn.Parameter(torch.zeros(self.n_clusters, self.latent_dim), requires_grad=True)
 
@@ -93,7 +91,7 @@ class cytoone(nn.Module):
                                    encoder_hidden_dims=self.encoder_hidden_dims,
                                    decoder_hidden_dims=self.decoder_hidden_dims)
         self.optimizer_G = optim.Adam([{'params': self.generator.parameters()},
-                                       {'params': self.pi_c.parameters()},
+                                       {'params': self.logit_pi_c.parameters()},
                                        {'params': self.mu_c.parameters()},
                                        {'params': self.log_var_c.parameters()}], lr=1e-3)
 
@@ -112,7 +110,9 @@ class cytoone(nn.Module):
 
 
     def training_loop(self,
-                      n_epoches: int):
+                      n_epoches: int=20):
+        G_recon = nn.L1Loss(reduction='mean')
+        lG_recon = nn.L1Loss(reduction='mean')
         self.train()
         for epoch in range(n_epoches):
             adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100)
@@ -153,6 +153,7 @@ class cytoone(nn.Module):
                                                                                                     batch_embedding=self.batch_embedding,
                                                                                                     compute_source=True)
                     gamma_c = self.compute_gamma_c(z=z)
+                    
                     loss_G_adv = 0
                     loss_G_cls = 0 
                     loss_G_recon = 0 
@@ -167,11 +168,10 @@ class cytoone(nn.Module):
                         
                         fake_validity, pred_cls = self.discriminator(cell_by_gene_counts_target)
                         loss_G_adv = -torch.mean(fake_validity)
-                        loss_G_cls = F.cross_entropy(pred_cls, target_batch_index, reduction='mean')
+                        loss_G_cls = -F.cross_entropy(pred_cls, target_batch_index, reduction='mean')
 
-                        loss_G_recon = nn.L1Loss(cell_by_gene_counts, cell_by_gene_counts_recon)
-                        loss_G_l_recon = nn.L1Loss(z, z_recon)
-
+                        loss_G_recon = G_recon(cell_by_gene_counts, cell_by_gene_counts_recon)
+                        loss_G_l_recon = lG_recon(z, z_recon)
                     
                         gamma_c_recon = self.compute_gamma_c(z=z_recon)
                     
@@ -187,7 +187,8 @@ class cytoone(nn.Module):
 
                     kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
 
-                    kl_c = torch.mean(torch.sum(torch.log(gamma_c/self.pi_c.unsqueeze(0)+1e-20) * gamma_c, dim=1))
+
+                    kl_c = torch.mean(torch.sum((torch.log(gamma_c+1e-20)-self.logit_pi_c.unsqueeze(0)) * gamma_c, dim=1))
                     loss_vi = -log_likelihood + kl_z + kl_c
                     
                     loss_G = loss_vi + loss_G_adv + loss_G_cls + loss_G_recon + loss_G_l_recon + loss_anchor
@@ -200,7 +201,7 @@ class cytoone(nn.Module):
         # output size batch size * n_clusters 
         gmm_log_probs = self.diag_gaussian_mixture_log_prob(x=z, mu_c=self.mu_c, log_var_c=self.log_var_c)
 
-        temp = torch.exp(torch.log(self.pi_c.unsqueeze(0) + 1e-20) + gmm_log_probs)
+        temp = torch.exp(self.logit_pi_c.unsqueeze(0) + gmm_log_probs)
         gamma_c = temp/(temp.sum(dim=1).view(-1,1))
         return gamma_c
 
@@ -233,8 +234,8 @@ class cytoone(nn.Module):
             for minibatch in tqdm(range(100)):
                 L=0
                 cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
-                                                                                            stratum_id=minibatch,
-                                                                                            model_device=self.model_device)
+                                                                            stratum_id=minibatch,
+                                                                            model_device=self.model_device)
                 _, _, _, _, mu_x, _ = self.generator(x=cell_by_gene_counts,
                                                     source_batch_index=source_batch_index,
                                                     target_batch_index=None,
@@ -275,7 +276,7 @@ class cytoone(nn.Module):
 
             pre = gmm.fit_predict(Z)
 
-            self.pi_c.data = torch.tensor(gmm.weights_, dtype=torch.float32, device=self.model_device)
+            self.logit_pi_c.data = torch.tensor(np.log(gmm.weights_), dtype=torch.float32, device=self.model_device)
             self.mu_c.data = torch.tensor(gmm.means_, dtype=torch.float32, device=self.model_device)
             self.log_var_c.data = torch.log(torch.tensor(gmm.covariances_, dtype=torch.float32, device=self.model_device))
 
