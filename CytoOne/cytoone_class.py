@@ -98,8 +98,8 @@ class cytoone(nn.Module):
         if self.n_batches > 1:
             self.batch_embedding = nn.Embedding(self.n_batches, self.batch_embedding_dim)
             self.discriminator = discriminator(input_dim=self.input_dim,
-                                            n_batches=self.n_batches,
-                                            hidden_dims=self.discriminator_hidden_dims)
+                                                n_batches=self.n_batches,
+                                                hidden_dims=self.discriminator_hidden_dims)
             self.latent_discriminator = latent_discriminator(input_dim=self.latent_dim,
                                                             n_batches=self.n_batches,
                                                             hidden_dims=self.latent_discriminator_hidden_dims)
@@ -124,7 +124,9 @@ class cytoone(nn.Module):
                     cell_by_gene_counts_target, z, _, _, _, _ = self.generator(x=cell_by_gene_counts,
                                                                             source_batch_index=source_batch_index,
                                                                             target_batch_index=target_batch_index,
-                                                                            batch_embedding=self.batch_embedding)
+                                                                            batch_embedding=self.batch_embedding,
+                                                                            compute_source=False,
+                                                                            compute_target=True)
                     # Train discriminator 
                     self.optimizer_D.zero_grad()
 
@@ -151,7 +153,8 @@ class cytoone(nn.Module):
                                                                                                     source_batch_index=source_batch_index,
                                                                                                     target_batch_index=target_batch_index,
                                                                                                     batch_embedding=self.batch_embedding,
-                                                                                                    compute_source=True)
+                                                                                                    compute_source=True,
+                                                                                                    compute_target=True)
                     gamma_c = self.compute_gamma_c(z=z)
                     
                     loss_G_adv = 0
@@ -164,7 +167,8 @@ class cytoone(nn.Module):
                         cell_by_gene_counts_recon, z_recon, _, _, _, _ = self.generator(x=cell_by_gene_counts_target,
                                                                             source_batch_index=target_batch_index,
                                                                             target_batch_index=source_batch_index,
-                                                                            compute_source=False)
+                                                                            compute_source=False,
+                                                                            compute_target=True)
                         
                         fake_validity, pred_cls = self.discriminator(cell_by_gene_counts_target)
                         loss_G_adv = -torch.mean(fake_validity)
@@ -181,12 +185,13 @@ class cytoone(nn.Module):
                     log_likelihood = torch.mean(self.diag_gaussian_log_prob(x=cell_by_gene_counts, 
                                                                             mu=mu_x, 
                                                                             log_var=log_var_x))
+                    # mu_c is n_clusters * latent_dim -> 1 * n_clusters * latent_dim
+                    # mu_z is batch_size * latent_dim -> batch_size * 1 * latent_dim
                     kl_z = 0.5 * torch.sum((self.mu_c.unsqueeze(0)-mu_z.unsqueeze(1)).pow(2)/torch.exp(self.log_var_c.unsqueeze(0)) + \
                                 torch.exp(log_var_z.unsqueeze(1)-self.log_var_c.unsqueeze(0)) + self.log_var_c.unsqueeze(0), dim=2)
                     kl_z = torch.sum(gamma_c * kl_z, dim=1)
 
                     kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
-
 
                     kl_c = torch.mean(torch.sum((torch.log(gamma_c+1e-20)-self.logit_pi_c.unsqueeze(0)) * gamma_c, dim=1))
                     loss_vi = -log_likelihood + kl_z + kl_c
@@ -200,8 +205,10 @@ class cytoone(nn.Module):
     def compute_gamma_c(self, z):
         # output size batch size * n_clusters 
         gmm_log_probs = self.diag_gaussian_mixture_log_prob(x=z, mu_c=self.mu_c, log_var_c=self.log_var_c)
-
+        # gmm_log_probs is batch_size * n_clusters
+        # logit_pi_c needs to be 1 * n_clusters to broadcast
         temp = torch.exp(self.logit_pi_c.unsqueeze(0) + gmm_log_probs)
+        # temp and gamma_c is batch_size * n_clusters
         gamma_c = temp/(temp.sum(dim=1).view(-1,1))
         return gamma_c
 
@@ -224,35 +231,34 @@ class cytoone(nn.Module):
     def pretrain_generator(self):
         if  not os.path.exists('./pretrain_model.pk'):
 
-            Loss=nn.MSELoss()
-            opti=optim.Adam({'params': self.generator.parameters()},
-                            lr=1e-3)
+            opti=optim.Adam({'params': self.generator.parameters()}, lr=1e-3)
 
             print('Pretraining......')
             adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100, batch_index=0)
 
             for minibatch in tqdm(range(100)):
-                L=0
                 cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
                                                                             stratum_id=minibatch,
                                                                             model_device=self.model_device)
-                _, _, _, _, mu_x, _ = self.generator(x=cell_by_gene_counts,
-                                                    source_batch_index=source_batch_index,
-                                                    target_batch_index=None,
-                                                    batch_embedding=self.batch_embedding,
-                                                    compute_source=True)
+                _, _, mu_z, log_var_z, mu_x, log_var_x = self.generator(x=cell_by_gene_counts,
+                                                                        source_batch_index=source_batch_index,
+                                                                        target_batch_index=source_batch_index,
+                                                                        batch_embedding=self.batch_embedding,
+                                                                        compute_source=True,
+                                                                        compute_target=False)
 
                 
-                loss=Loss(cell_by_gene_counts, mu_x)
+                log_likelihood = torch.mean(self.diag_gaussian_log_prob(x=cell_by_gene_counts, 
+                                                                        mu=mu_x, 
+                                                                        log_var=log_var_x))
+                kl_z = 0.5 * torch.sum(mu_z.pow(2) + torch.exp(log_var_z), dim=1)
+                kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
 
-                L+=loss.detach().cpu().numpy()
+                loss = -log_likelihood + kl_z
 
                 opti.zero_grad()
                 loss.backward()
                 opti.step()
-
-            self.generator.encoder.log_var.load_state_dict(self.generator.encoder.mu.state_dict())
-            self.generator.decoder.log_var.load_state_dict(self.generator.decoder.mu.state_dict())
 
             Z = []
             with torch.no_grad():
@@ -261,13 +267,12 @@ class cytoone(nn.Module):
                                                                                 stratum_id=minibatch,
                                                                                 model_device=self.model_device)
 
-                    _, _, mu_z, log_var_z, mu_x, log_var_x = self.generator(x=cell_by_gene_counts,
-                                                                            source_batch_index=source_batch_index,
-                                                                            target_batch_index=None,
-                                                                            batch_embedding=self.batch_embedding,
-                                                                            compute_source=True)
-                    assert F.mse_loss(mu_z, log_var_z) == 0
-                    assert F.mse_loss(mu_x, log_var_x) == 0
+                    _, _, mu_z, _, _, _ = self.generator(x=cell_by_gene_counts,
+                                                        source_batch_index=source_batch_index,
+                                                        target_batch_index=source_batch_index,
+                                                        batch_embedding=self.batch_embedding,
+                                                        compute_source=True,
+                                                        compute_target=False)
                     Z.append(mu_z)
 
             Z = torch.cat(Z, 0).detach().cpu().numpy()
@@ -281,7 +286,6 @@ class cytoone(nn.Module):
             self.log_var_c.data = torch.log(torch.tensor(gmm.covariances_, dtype=torch.float32, device=self.model_device))
 
             torch.save(self.state_dict(), './pretrain_model.pk')
-
         else:
             self.load_state_dict(torch.load('./pretrain_model.pk')) 
     

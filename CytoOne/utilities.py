@@ -79,12 +79,9 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
 
 
 def generate_strata(adata, 
-                    n_splits: int=100,
-                    batch_index: Optional[int]=None):
+                    n_splits: int=100):
     adata_w_batch = adata.to_df().copy()
     adata_w_batch['batch_index'] = adata.obs['batch_index'].copy()
-    if batch_index is not None:
-        adata_w_batch = adata_w_batch.loc[adata_w_batch['batch_index']==batch_index, :]
 
     adata_w_batch = adata_w_batch.groupby(['batch_index'], observed=True, as_index=True).apply(lambda x: x.sample(frac=1, replace=False),
                                                             include_groups=False)

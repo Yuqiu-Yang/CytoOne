@@ -121,7 +121,12 @@ class generator(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
     
-    def forward(self, x, source_batch_index, target_batch_index, batch_embedding, compute_source):
+    def forward(self, x, 
+                source_batch_index, 
+                target_batch_index, 
+                batch_embedding, 
+                compute_source,
+                compute_target):
         mu_z, log_var_z = self.encoder(x=x, 
                                     batch_index=source_batch_index,
                                     batch_embedding=batch_embedding)
@@ -134,7 +139,8 @@ class generator(nn.Module):
             mu_x, log_var_x = self.decoder(z=z,
                                         batch_index=source_batch_index,
                                         batch_embedding=batch_embedding)
-        if (batch_embedding is not None) and (target_batch_index is not None):
+        x_target = None
+        if compute_target:
             mu_x_target, log_var_x_target = self.decoder(z=z,
                                                         batch_index=target_batch_index,
                                                         batch_embedding=batch_embedding)
