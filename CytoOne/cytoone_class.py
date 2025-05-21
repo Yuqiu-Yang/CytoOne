@@ -200,7 +200,11 @@ class cytoone(nn.Module):
 
                     loss_G.backward()
                     self.optimizer_G.step()
+    
 
+    # def gradient_penality(self):
+    #     gradient, = torch.autograd.grad(outputs=, inputs=, create_graph=True)
+    #     return gradient.square().sum([??])
 
     def compute_gamma_c(self, z):
         # output size batch size * n_clusters 
@@ -234,7 +238,7 @@ class cytoone(nn.Module):
             opti=optim.Adam({'params': self.generator.parameters()}, lr=1e-3)
 
             print('Pretraining......')
-            adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100, batch_index=0)
+            adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100)
 
             for minibatch in tqdm(range(100)):
                 cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
