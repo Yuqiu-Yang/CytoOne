@@ -7,10 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 
-from sklearn.mixture import GaussianMixture
 from CytoOne.utilities import import_data, generate_strata, load_stratum
-from CytoOne.generator import generator
-from CytoOne.discriminator import discriminator, latent_discriminator
+
 
 from tqdm.auto import tqdm 
 from typing import Optional, Union
@@ -202,94 +200,5 @@ class cytoone(nn.Module):
                     self.optimizer_G.step()
     
 
-    # def gradient_penality(self):
-    #     gradient, = torch.autograd.grad(outputs=, inputs=, create_graph=True)
-    #     return gradient.square().sum([??])
-
-    def compute_gamma_c(self, z):
-        # output size batch size * n_clusters 
-        gmm_log_probs = self.diag_gaussian_mixture_log_prob(x=z, mu_c=self.mu_c, log_var_c=self.log_var_c)
-        # gmm_log_probs is batch_size * n_clusters
-        # logit_pi_c needs to be 1 * n_clusters to broadcast
-        temp = torch.exp(self.logit_pi_c.unsqueeze(0) + gmm_log_probs)
-        # temp and gamma_c is batch_size * n_clusters
-        gamma_c = temp/(temp.sum(dim=1).view(-1,1))
-        return gamma_c
-
-    def diag_gaussian_mixture_log_prob(self, x, mu_c, log_var_c):
-        # x size batch_size * dim
-        # mu_c/log_var_c size n_clusters * dim
-        # output size batch_size * n_clusters  
-        G = []
-        for c in range(self.n_clusters):
-            G.append(self.diag_gaussian_log_prob(x=x, mu=mu_c[c:c+1, :], log_var=log_var_c[c:c+1,:]).view(-1,1))
-        return torch.cat(G, dim=1)
-
-    def diag_gaussian_log_prob(self, x, mu, log_var):
-        # x size batch_size * dim
-        # mu/log_var size 1 * dim or batch_size * dim 
-        # output size batch_size * 1
-        individual_log_prob = -0.5 * [np.log(2*np.pi) + log_var + (x-mu).pow(2)/torch.exp(log_var)]
-        return torch.sum(individual_log_prob, dim=1, keepdim=True)
-
-    def pretrain_generator(self):
-        if  not os.path.exists('./pretrain_model.pk'):
-
-            opti=optim.Adam({'params': self.generator.parameters()}, lr=1e-3)
-
-            print('Pretraining......')
-            adata_w_batch_strata = generate_strata(adata=self.adata, n_splits=100)
-
-            for minibatch in tqdm(range(100)):
-                cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
-                                                                            stratum_id=minibatch,
-                                                                            model_device=self.model_device)
-                _, _, mu_z, log_var_z, mu_x, log_var_x = self.generator(x=cell_by_gene_counts,
-                                                                        source_batch_index=source_batch_index,
-                                                                        target_batch_index=source_batch_index,
-                                                                        batch_embedding=self.batch_embedding,
-                                                                        compute_source=True,
-                                                                        compute_target=False)
-
-                
-                log_likelihood = torch.mean(self.diag_gaussian_log_prob(x=cell_by_gene_counts, 
-                                                                        mu=mu_x, 
-                                                                        log_var=log_var_x))
-                kl_z = 0.5 * torch.sum(mu_z.pow(2) + torch.exp(log_var_z), dim=1)
-                kl_z = torch.mean(kl_z - torch.sum(log_var_z+1, dim=1) * 0.5)
-
-                loss = -log_likelihood + kl_z
-
-                opti.zero_grad()
-                loss.backward()
-                opti.step()
-
-            Z = []
-            with torch.no_grad():
-                for minibatch in tqdm(range(100)):
-                    cell_by_gene_counts, source_batch_index, _ = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
-                                                                                stratum_id=minibatch,
-                                                                                model_device=self.model_device)
-
-                    _, _, mu_z, _, _, _ = self.generator(x=cell_by_gene_counts,
-                                                        source_batch_index=source_batch_index,
-                                                        target_batch_index=source_batch_index,
-                                                        batch_embedding=self.batch_embedding,
-                                                        compute_source=True,
-                                                        compute_target=False)
-                    Z.append(mu_z)
-
-            Z = torch.cat(Z, 0).detach().cpu().numpy()
-
-            gmm = GaussianMixture(n_components=self.n_clusters, covariance_type='diag')
-
-            pre = gmm.fit_predict(Z)
-
-            self.logit_pi_c.data = torch.tensor(np.log(gmm.weights_), dtype=torch.float32, device=self.model_device)
-            self.mu_c.data = torch.tensor(gmm.means_, dtype=torch.float32, device=self.model_device)
-            self.log_var_c.data = torch.log(torch.tensor(gmm.covariances_, dtype=torch.float32, device=self.model_device))
-
-            torch.save(self.state_dict(), './pretrain_model.pk')
-        else:
-            self.load_state_dict(torch.load('./pretrain_model.pk')) 
+    
     

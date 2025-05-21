@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd 
 
 import torch 
+import torch.nn as nn 
 # Typing 
 from typing import Optional, Tuple, Union
 
@@ -116,4 +117,42 @@ def load_stratum(adata_w_batch_strata,
 
     
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, 
+                 hidden_dims=[512, 256],
+                 drop_out_p=0.2):
+        super().__init__()
 
+        self.skip_proj = nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+        
+        self.residual_seq = nn.ModuleList()
+        current_d = in_dim
+        for h_d in hidden_dims:
+            self.residual_seq.append(nn.Sequential(
+                nn.Linear(current_d, h_d),
+                nn.LayerNorm(h_d),
+                nn.GELU(),
+                nn.Dropout(drop_out_p)
+            ))
+            current_d = h_d       
+        self.residual_seq.append(nn.Sequential(
+                    nn.Linear(current_d, out_dim),
+                    nn.LayerNorm(out_dim)
+                ))  
+    def forward(self, x):
+        skip_x = self.skip_proj(x)
+        for s in self.residual_seq:
+            x = s(x)
+        return skip_x + 0.1*x
+
+
+def kl(delta_mu, delta_log_var, mu, log_var):
+    var = torch.exp(log_var)
+    delta_var = torch.exp(delta_log_var)
+
+    loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1, 2, 3])
+    return torch.mean(loss, dim=0)
+
+def reparameterize(mu, std):
+    z = torch.randn_like(mu) * std + mu
+    return z

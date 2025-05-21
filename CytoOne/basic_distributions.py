@@ -1,26 +1,37 @@
-# Numeric manipulation 
-import math
-import numpy as np 
-
 # PyTorch
 import torch
 import torch.nn as nn 
-import torch.nn.functional as F
-import torch.distributions as d 
+from torch import Tensor
 from torch.distributions import constraints
 from torch.distributions.utils import (
     broadcast_all,
     lazy_property,
     logits_to_probs,
     probs_to_logits,
-    _standard_normal,
 )
 from torch.nn.functional import softplus
+from torch.distributions.normal import Normal
+from torch.distributions.transformed_distribution import TransformedDistribution
+from torch.distributions.transforms import SoftplusTransform
 
 # Pyro 
 from pyro.distributions import TorchDistribution
 from pyro.distributions.util import broadcast_shape
-from pyro.distributions import LogNormal
+
+
+class SoftplusNormal(TransformedDistribution):
+    arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
+    support = constraints.positive
+    has_rsample = True
+
+    def __init__(self, loc, scale, validate_args=None):
+        base_dist = Normal(loc, scale, validate_args=validate_args)
+        super().__init__(base_dist, SoftplusTransform(), validate_args=validate_args)
+
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(SoftplusNormal, _instance)
+        return super().expand(batch_shape, _instance=new)
+
 
 
 class zero_inflated_positive_distribution(TorchDistribution):
@@ -68,11 +79,11 @@ class zero_inflated_positive_distribution(TorchDistribution):
 
     @lazy_property
     def gate(self):
-        return logits_to_probs(self.gate_logits)
+        return logits_to_probs(self.gate_logits, is_binary=True)
 
     @lazy_property
     def gate_logits(self):
-        return probs_to_logits(self.gate)
+        return probs_to_logits(self.gate, is_binary=True)
 
     def log_prob(self, value):
         if self._validate_args:
@@ -80,15 +91,12 @@ class zero_inflated_positive_distribution(TorchDistribution):
 
         if "gate" in self.__dict__:
             gate, value = broadcast_all(self.gate, value)
-            log_prob = self.base_dist.log_prob(value+0.00001)
-            log_prob = torch.where(value == 0, (gate).log(), (-gate).log1p() + log_prob)
+            log_prob = torch.where(value == 0, (gate).log(), (-gate).log1p() + self.base_dist.log_prob(value))
         else:
             gate_logits, value = broadcast_all(self.gate_logits, value)
-            log_prob_minus_log_gate = -gate_logits + self.base_dist.log_prob(value)
-            log_gate = -softplus(-gate_logits)
-            log_prob = log_prob_minus_log_gate + log_gate
-            zero_log_prob = softplus(log_prob_minus_log_gate) + log_gate
-            log_prob = torch.where(value == 0, zero_log_prob, log_prob)
+            log_prob = torch.where(value == 0, 
+                                   gate_logits-softplus(gate_logits), 
+                                   -gate_logits + self.base_dist.log_prob(value)-softplus(-gate_logits))
         return log_prob
 
     def sample(self, sample_shape=torch.Size()):
@@ -98,17 +106,6 @@ class zero_inflated_positive_distribution(TorchDistribution):
             samples = self.base_dist.expand(shape).sample()
             samples = torch.where(mask, samples.new_zeros(()), samples)
         return samples
-
-
-    @lazy_property
-    def mean(self):
-        return (1 - self.gate) * self.base_dist.mean
-
-    @lazy_property
-    def variance(self):
-        return (1 - self.gate) * (
-            self.base_dist.mean**2 + self.base_dist.variance
-        ) - (self.mean) ** 2
 
     def expand(self, batch_shape, _instance=None):
         new = self._get_checked_instance(type(self), _instance)
@@ -127,10 +124,8 @@ class zero_inflated_positive_distribution(TorchDistribution):
         return new
 
 
-class zero_inflated_lognormal(zero_inflated_positive_distribution):
+class zero_inflated_softplusnormal(zero_inflated_positive_distribution):
     arg_constraints = {
-        #"concentration": constraints.positive,
-        #"rate": constraints.positive,
         "gate": constraints.unit_interval,
         "gate_logits": constraints.real,
     }
@@ -138,7 +133,7 @@ class zero_inflated_lognormal(zero_inflated_positive_distribution):
 
     def __init__(self, loc, scale, *, 
                  gate=None, gate_logits=None, validate_args=None):
-        base_dist = LogNormal(loc=loc, 
+        base_dist = SoftplusNormal(loc=loc, 
                           scale=scale, validate_args=False)
         base_dist._validate_args = validate_args
 
