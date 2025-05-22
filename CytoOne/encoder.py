@@ -4,9 +4,6 @@ import torch.nn.functional as F
 from CytoOne.utilities import ResidualBlock
 
 
-
-
-
 class Encoder(nn.Module):
     def __init__(self,
                  input_dim: int,

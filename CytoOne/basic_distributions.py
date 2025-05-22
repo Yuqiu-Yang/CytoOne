@@ -34,7 +34,7 @@ class SoftplusNormal(TransformedDistribution):
 
 
 
-class zero_inflated_positive_distribution(TorchDistribution):
+class ZeroInflatedPositiveDistribution(TorchDistribution):
     """
     Generic Zero Inflated positive distribution.
 
@@ -117,14 +117,14 @@ class zero_inflated_positive_distribution(TorchDistribution):
             else None
         )
         base_dist = self.base_dist.expand(batch_shape)
-        zero_inflated_positive_distribution.__init__(
+        ZeroInflatedPositiveDistribution.__init__(
             new, base_dist, gate=gate, gate_logits=gate_logits, validate_args=False
         )
         new._validate_args = self._validate_args
         return new
 
 
-class zero_inflated_softplusnormal(zero_inflated_positive_distribution):
+class ZeroInflatedSoftplusNormal(ZeroInflatedPositiveDistribution):
     arg_constraints = {
         "gate": constraints.unit_interval,
         "gate_logits": constraints.real,

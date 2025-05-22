@@ -28,27 +28,35 @@ class Decoder(nn.Module):
                                                     drop_out_p=drop_out_p))
             # p(z_l | z_(l-1))
             self.condition_z.append(nn.Sequential(
-                ResidualBlock(in_dim=latent_d, ),
-                nn.GELU(),
-                nn.Linear()
+                ResidualBlock(in_dim=latent_d, 
+                              out_dim=latent_d,
+                              hidden_dims=[latent_d,latent_d]),
+                nn.GELU(latent_d),
+                nn.Linear(latent_d, 2*latent_d)
             ))
             # p(z_l | x, z_(l-1))
             self.condition_xz.append(nn.Sequential(
-                ResidualBlock(),
-                nn.GELU(),
-                nn.Linear()
+                ResidualBlock(in_dim=latent_d*2,
+                              out_dim=latent_d,
+                              hidden_dims=[latent_d,latent_d]),
+                nn.GELU(latent_d),
+                nn.Linear(latent_d, 2*latent_d)
             ))
             current_d = latent_d
         
         if zero_inflated:
             self.recon = nn.Sequential(
-                ResidualBlock(z_dim // 32),
-                nn.Conv2d(z_dim // 32, 3, kernel_size=1),
+                ResidualBlock(in_dim=current_d+batch_embedding_dim,
+                              out_dim=current_d+batch_embedding_dim,
+                              hidden_dims=hidden_dims[-1]),
+                nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
             )
         else:
             self.recon = nn.Sequential(
-                ResidualBlock(z_dim // 32),
-                nn.Conv2d(z_dim // 32, 3, kernel_size=1),
+                ResidualBlock(in_dim=current_d+batch_embedding_dim,
+                              out_dim=current_d+batch_embedding_dim,
+                              hidden_dims=hidden_dims[-1]),
+                nn.Linear(current_d+batch_embedding_dim, 2*input_dim)
             ) 
 
         self.zs = []
@@ -80,8 +88,7 @@ class Decoder(nn.Module):
             mu, log_var = self.condition_z[i](decoder_out).chunk(2, dim=1)
 
             if xs is not None:
-                delta_mu, delta_log_var = self.condition_xz[i](torch.cat([xs[i], decoder_out], dim=1)) \
-                    .chunk(2, dim=1)
+                delta_mu, delta_log_var = self.condition_xz[i](torch.cat([xs[i], decoder_out], dim=1)).chunk(2, dim=1)
                 kl_losses.append(kl(delta_mu, delta_log_var, mu, log_var))
                 mu = mu + delta_mu
                 log_var = log_var + delta_log_var
@@ -96,9 +103,6 @@ class Decoder(nn.Module):
                 z = reparameterize(mu, 0 if i == 0 else torch.exp(0.5 * log_var))
             else:
                 z = reparameterize(mu, torch.exp(0.5 * log_var))
-
-            map_h *= 2 ** (len(self.decoder_blocks[i].channels) - 1)
-            map_w *= 2 ** (len(self.decoder_blocks[i].channels) - 1)
 
         if self.zero_inflated:
             x_mu, x_log_var, x_gate_logit = self.recon(decoder_out)

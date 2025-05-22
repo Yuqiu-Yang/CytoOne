@@ -150,9 +150,40 @@ def kl(delta_mu, delta_log_var, mu, log_var):
     var = torch.exp(log_var)
     delta_var = torch.exp(delta_log_var)
 
-    loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1, 2, 3])
+    loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1, 2])
     return torch.mean(loss, dim=0)
 
 def reparameterize(mu, std):
     z = torch.randn_like(mu) * std + mu
     return z
+
+
+def compute_mmd(x, y):
+    """
+    Compute Maximum Mean Discrepancy between two distributions
+    """
+    xx = torch.mm(x, x.t())
+    yy = torch.mm(y, y.t())
+    xy = torch.mm(x, y.t())
+    
+    # RBF Kernel
+    bandwidth_range = [0.01, 0.1, 1, 10]
+    xx_sum = torch.diag(xx).unsqueeze(1).expand(xx.size(0), xx.size(0))
+    xx_rbf = xx_sum + xx_sum.t() - 2*xx
+    
+    yy_sum = torch.diag(yy).unsqueeze(1).expand(yy.size(0), yy.size(0))
+    yy_rbf = yy_sum + yy_sum.t() - 2*yy
+    
+    xy_sum_1 = torch.diag(xx).unsqueeze(1).expand(xx.size(0), yy.size(0))
+    xy_sum_2 = torch.diag(yy).unsqueeze(0).expand(xx.size(0), yy.size(0))
+    xy_rbf = xy_sum_1 + xy_sum_2 - 2*xy
+    
+    mmd = 0
+    for bandwidth in bandwidth_range:
+        xx_kernel = torch.exp(-xx_rbf / (2 * bandwidth ** 2))
+        yy_kernel = torch.exp(-yy_rbf / (2 * bandwidth ** 2))
+        xy_kernel = torch.exp(-xy_rbf / (2 * bandwidth ** 2))
+        
+        mmd += torch.mean(xx_kernel) + torch.mean(yy_kernel) - 2 * torch.mean(xy_kernel)
+            
+    return mmd
