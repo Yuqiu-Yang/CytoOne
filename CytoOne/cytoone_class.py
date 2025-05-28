@@ -9,7 +9,9 @@ from torch import optim
 from CytoOne.encoder import Encoder
 from CytoOne.decoder import Decoder
 
-from CytoOne.utilities import import_data, generate_strata, load_stratum
+from CytoOne.utilities import import_data, generate_strata,\
+                             load_stratum, reparameterize, \
+                             kl_standard, compute_mmd
 
 from torch.distributions import Normal
 from CytoOne.basic_distributions import ZeroInflatedSoftplusNormal
@@ -25,8 +27,8 @@ class cytoone(nn.Module):
                  normalize: bool=True,
                  latent_dim: list=[10, 2],
                  batch_embedding_dim: int=2, 
-                 encoder_hidden_dims=[500, 500, 2000],
-                 decoder_hidden_dims=[2000, 500, 500],
+                 encoder_hidden_dims=[[512, 256], [256, 128]],
+                 decoder_hidden_dims=[[128, 256], [256, 512]],
                  model_device: Optional[Union[str, torch.device]] = None):
         super().__init__()
 
@@ -36,6 +38,7 @@ class cytoone(nn.Module):
         self.adata = None
         self.input_dim = None
         self.n_batches = None
+        self.zero_inflated = None
         self.latent_dim = latent_dim
 
         self.batch_embedding_dim = batch_embedding_dim
@@ -50,7 +53,8 @@ class cytoone(nn.Module):
         else:
             self.model_device = model_device
 
-        self.generator = None
+        self.encoder = None
+        self.decoder = None
 
         self.optimizer = None
         self.batch_embedding = None
@@ -63,10 +67,11 @@ class cytoone(nn.Module):
                                  **self.import_data_par)
         self.input_dim = self.adata.uns["n_genes"]
         self.n_batches = self.adata.uns['n_batches']
+        self.zero_inflated = self.adata.uns['zero_inflated']
 
         self.encoder = Encoder()
         self.decoder = Decoder()
-        
+        self.batch_embedding = nn.Embedding(self.n_batches, self.batch_embedding_dim)
         
         self.optimizer = optim.Adam([{'params': self.encoder.parameters()},
                                        {'params': self.decoder.parameters()}], lr=1e-3)
@@ -74,11 +79,49 @@ class cytoone(nn.Module):
 
         self.to(self.model_device)
 
+    def loss_function(self,
+                      cell_by_gene_counts,
+                      source_batch_index,
+                      mu, log_var,
+                      x_mu, x_log_var, x_gate_logit):
+        
+        kl_loss = kl_standard(mu=mu, log_var=log_var) 
+        
+
 
     def training_loop(self,
                       n_epoches: int=20):
-        pass 
+        self.train()
+        for epoch in range(n_epoches):
+            adata_w_batch_strata = generate_strata(adata=self.adata,
+                                                   n_splits=100)
+            for minibatch_ind in range(100):
+                cell_by_gene_counts, source_batch_index, target_batch_index = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
+                                                                                           target_batch_index=None,
+                                                                                        stratum_id=minibatch_ind)
+                mu, log_var, xs = self.encoder(x=cell_by_gene_counts,
+                                            batch_index=source_batch_index,
+                                            batch_embedding=self.batch_embedding)
+                z = reparameterize(mu, torch.exp(0.5 * log_var))
 
+                if self.zero_inflated:
+                    x_mu, x_log_var, x_gate_logit, kl_losses = self.decoder(z=z,
+                                                                            batch_index=target_batch_index,
+                                                                            batch_embedding=self.batch_embedding,
+                                                                            xs=xs,
+                                                                            mode='random') 
+                else: 
+                    x_mu, x_log_var, kl_losses = self.decoder(z=z,
+                                                                batch_index=target_batch_index,
+                                                                batch_embedding=self.batch_embedding,
+                                                                xs=xs,
+                                                                mode='random') 
+
+                self.optimizer.zero_grad()
+                loss = self.loss_function()
+                loss.backward()
+
+                self.optimizer.step()
                 
     
 

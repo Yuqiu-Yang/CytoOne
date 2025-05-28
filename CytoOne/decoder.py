@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn 
 import torch.nn.functional as F
 
-from CytoOne.utilities import ResidualBlock, reparameterize, kl
+from CytoOne.utilities import ResidualBlock, reparameterize, kl_delta
 
 
 class Decoder(nn.Module):
@@ -31,7 +31,7 @@ class Decoder(nn.Module):
                 ResidualBlock(in_dim=latent_d, 
                               out_dim=latent_d,
                               hidden_dims=[latent_d,latent_d]),
-                nn.GELU(latent_d),
+                nn.GELU(),
                 nn.Linear(latent_d, 2*latent_d)
             ))
             # p(z_l | x, z_(l-1))
@@ -39,10 +39,10 @@ class Decoder(nn.Module):
                 ResidualBlock(in_dim=latent_d*2,
                               out_dim=latent_d,
                               hidden_dims=[latent_d,latent_d]),
-                nn.GELU(latent_d),
+                nn.GELU(),
                 nn.Linear(latent_d, 2*latent_d)
             ))
-            current_d = latent_d
+            current_d = latent_d*2
         
         if zero_inflated:
             self.recon = nn.Sequential(
@@ -59,56 +59,55 @@ class Decoder(nn.Module):
                 nn.Linear(current_d+batch_embedding_dim, 2*input_dim)
             ) 
 
-        self.zs = []
-
-    def forward(self, z, xs=None, mode="random", freeze_level=-1):
+    def forward(self, z, 
+                batch_index, 
+                batch_embedding,
+                xs=None, 
+                mode="random"):
         """
 
         :param z: shape. = (B, z_dim, map_h, map_w)
         :return:
         """
 
-        b, h, w = z.shape
+        b, w = z.shape
 
         # The init h (hidden state), can be replace with learned param, but it didn't work much
-        decoder_out = torch.zeros(b, h, w, device=z.device, dtype=z.dtype)
-
+        decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
+        zs = []
+        
         kl_losses = []
-        if freeze_level != -1 and len(self.zs) == 0 :
-            self.zs.append(z)
+
+        zs.append(z)
 
         for i in range(len(self.decoder_tower)):
 
             z_sample = torch.cat([decoder_out, z], dim=1)
             decoder_out = self.decoder_tower[i](z_sample)
 
-            if i == len(self.decoder_tower) - 1:
-                break
-
             mu, log_var = self.condition_z[i](decoder_out).chunk(2, dim=1)
 
             if xs is not None:
                 delta_mu, delta_log_var = self.condition_xz[i](torch.cat([xs[i], decoder_out], dim=1)).chunk(2, dim=1)
-                kl_losses.append(kl(delta_mu, delta_log_var, mu, log_var))
+                kl_losses.append(kl_delta(delta_mu, delta_log_var, mu, log_var))
                 mu = mu + delta_mu
                 log_var = log_var + delta_log_var
 
-            if mode == "fix" and i < freeze_level:
-                if len(self.zs) < freeze_level + 1:
-                    z = reparameterize(mu, 0)
-                    self.zs.append(z)
-                else:
-                    z = self.zs[i + 1]
-            elif mode == "fix":
-                z = reparameterize(mu, 0 if i == 0 else torch.exp(0.5 * log_var))
+            if mode == "fix":
+                z = reparameterize(mu, 0)
             else:
                 z = reparameterize(mu, torch.exp(0.5 * log_var))
+            zs.append(z)
 
+        batch_emb = batch_embedding(batch_index)
+        decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
         if self.zero_inflated:
-            x_mu, x_log_var, x_gate_logit = self.recon(decoder_out)
+            x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
             return x_mu, x_log_var, x_gate_logit, kl_losses
         else:
-            x_mu, x_log_var = self.recon(decoder_out)
+            x_mu, x_log_var = self.recon(decoder_out).chunk(2, dim=1)
             return x_mu, x_log_var, kl_losses
+
+        
 
         

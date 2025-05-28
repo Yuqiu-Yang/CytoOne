@@ -16,7 +16,8 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
                 batch_index_col: Optional[str]=None,
                 celltype_col: Optional[str]=None,
                 normalize: bool=True,
-                dr: bool=False):
+                dr: bool=False,
+                zero_inflated: bool=True):
     
     if isinstance(cell_metadata, str) and ("csv" in os.path.splitext(cell_metadata)[1]):
         cell_meta = pd.read_csv(cell_metadata, index_col=0)
@@ -62,6 +63,7 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
     adata.uns['batch_index_batch_map'] = adata.obs[["batch", "batch_index"]].drop_duplicates(ignore_index=True)
 
     adata.uns['n_genes'] = adata.var.shape[0]
+    adata.uns['zero_inflated'] = zero_inflated
 
     if normalize:
         if isinstance(adata.X, np.ndarray):
@@ -71,6 +73,9 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
             adata.X = adata.X.toarray()
             adata.X = np.arcsinh(adata.X / 5.0)
     
+    if zero_inflated:
+        adata.X = np.clip(adata.X, a_min=0, a_max=None)
+
     if dr:
         sc.pp.pca(adata)
         sc.pp.neighbors(adata)    
@@ -105,10 +110,14 @@ def generate_strata(adata,
 
 def load_stratum(adata_w_batch_strata, 
                  stratum_id, 
+                 target_batch_index: Optional[int]=None,
                  model_device='cpu'):
     cell_patch = adata_w_batch_strata.loc[adata_w_batch_strata['stratum'] == stratum_id, :]
     source_batch_index = torch.tensor(cell_patch['batch_index'], dtype=torch.int64, device=model_device)
-    target_batch_index = torch.tensor(np.random.permutation(cell_patch['batch_index'].values), dtype=torch.int64, device=model_device)
+    if target_batch_index is None:
+        target_batch_index = source_batch_index.clone()
+    else:
+        target_batch_index = torch.ones_like(source_batch_index)*target_batch_index
 
     cell_patch.drop(columns=['stratum', 'batch_index'], inplace=True)
     cell_by_gene_counts = torch.tensor(cell_patch.values, dtype=torch.float32, device=model_device)
@@ -146,17 +155,20 @@ class ResidualBlock(nn.Module):
         return skip_x + 0.1*x
 
 
-def kl(delta_mu, delta_log_var, mu, log_var):
+def kl_delta(delta_mu, delta_log_var, mu, log_var):
     var = torch.exp(log_var)
     delta_var = torch.exp(delta_log_var)
 
-    loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1, 2])
+    loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1])
+    return torch.mean(loss, dim=0)
+
+def kl_standard(mu, log_var):
+    loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - torch.exp(log_var), dim=[1])
     return torch.mean(loss, dim=0)
 
 def reparameterize(mu, std):
     z = torch.randn_like(mu) * std + mu
     return z
-
 
 def compute_mmd(x, y):
     """
