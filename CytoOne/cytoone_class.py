@@ -73,6 +73,9 @@ class cytoone(nn.Module):
 
         self.optimizer = None
         self.batch_embedding = None
+        # Add KL annealing 
+
+        # 
         self.RECON_list = []
         self.KLD_list = []
         self.MMD_list = []
