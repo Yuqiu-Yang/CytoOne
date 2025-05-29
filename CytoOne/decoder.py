@@ -64,21 +64,14 @@ class Decoder(nn.Module):
                 batch_embedding,
                 xs=None, 
                 mode="random"):
-        """
-
-        :param z: shape. = (B, z_dim, map_h, map_w)
-        :return:
-        """
 
         b, w = z.shape
 
-        # The init h (hidden state), can be replace with learned param, but it didn't work much
         decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
-        zs = []
+        
+        zs = [z]
         
         kl_losses = []
-
-        zs.append(z)
 
         for i in range(len(self.decoder_tower)):
 
@@ -103,10 +96,10 @@ class Decoder(nn.Module):
         decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
         if self.zero_inflated:
             x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
-            return x_mu, x_log_var, x_gate_logit, kl_losses
+            return x_mu, x_log_var, x_gate_logit, kl_losses, zs
         else:
             x_mu, x_log_var = self.recon(decoder_out).chunk(2, dim=1)
-            return x_mu, x_log_var, kl_losses
+            return x_mu, x_log_var, kl_losses, zs
 
         
 

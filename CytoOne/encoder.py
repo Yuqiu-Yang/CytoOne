@@ -10,9 +10,11 @@ class Encoder(nn.Module):
                  batch_embedding_dim: int=2, 
                  latent_dims: list=[10, 2],
                  hidden_dims: list=[[512, 256], [256, 128]],
-                 drop_out_p: float=0.2):
+                 drop_out_p: float=0.2) -> None:
         super().__init__()
 
+        # The encoder module takes x and batch embedding 
+        # (x + batch) -> latent_dims[0] -> latent_dims[1] -> ...
         self.encoder_tower = nn.ModuleList()
         current_d = input_dim+batch_embedding_dim
         for latent_d, hidden_d in zip(latent_dims, hidden_dims):
@@ -21,7 +23,7 @@ class Encoder(nn.Module):
                                                     hidden_dims=hidden_d,
                                                     drop_out_p=drop_out_p))
             current_d = latent_d
-
+        # Generate mu and log_var for the top-level z 
         self.condition_x = nn.Sequential(
             nn.GELU(),
             nn.Linear(current_d, 2*current_d)
@@ -41,5 +43,7 @@ class Encoder(nn.Module):
             xs.append(x)
 
         mu, log_var = self.condition_x(last_x).chunk(2, dim=1)
-
+        # xs is now [latent_dims[0], latent_dims[1], ...]
+        # we do not need the top-level for the decoder
+        # To make indexing a litter easier, we also reverse the order 
         return mu, log_var, xs[:-1][::-1] 

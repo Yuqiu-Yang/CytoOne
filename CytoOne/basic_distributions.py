@@ -13,7 +13,6 @@ from torch.nn.functional import softplus
 from torch.distributions.normal import Normal
 from torch.distributions.transformed_distribution import TransformedDistribution
 from torch.distributions.transforms import SoftplusTransform
-
 # Pyro 
 from pyro.distributions import TorchDistribution
 from pyro.distributions.util import broadcast_shape
@@ -38,12 +37,6 @@ class ZeroInflatedPositiveDistribution(TorchDistribution):
     """
     Generic Zero Inflated positive distribution.
 
-    This can be used directly or can be used as a base class as e.g. for
-    :class:`ZeroInflatedPoisson` and :class:`ZeroInflatedNegativeBinomial`.
-
-    :param TorchDistribution base_dist: the base distribution.
-    :param torch.Tensor gate: probability of extra zeros given via a Bernoulli distribution.
-    :param torch.Tensor gate_logits: logits of extra zeros given via a Bernoulli distribution.
     """
 
     arg_constraints = {
