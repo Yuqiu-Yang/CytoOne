@@ -89,7 +89,7 @@ class ZeroInflatedPositiveDistribution(TorchDistribution):
             gate_logits, value = broadcast_all(self.gate_logits, value)
             log_prob = torch.where(value == 0, 
                                    gate_logits-softplus(gate_logits), 
-                                   -gate_logits + self.base_dist.log_prob(value)-softplus(-gate_logits))
+                                   -gate_logits + self.base_dist.log_prob(value+1e-7)-softplus(-gate_logits))
         return log_prob
 
     def sample(self, sample_shape=torch.Size()):

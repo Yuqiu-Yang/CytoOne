@@ -1,6 +1,7 @@
 import os 
 import numpy as np 
 import pandas as pd 
+from scipy.stats import ks_2samp
 
 import torch 
 import torch.nn as nn 
@@ -13,7 +14,7 @@ from CytoOne.utilities import import_data, generate_strata,\
                              load_stratum, reparameterize, \
                              kl_standard, mmd_loss
 
-from torch.distributions import Normal
+from torch.distributions import Normal, Independent
 from CytoOne.basic_distributions import ZeroInflatedSoftplusNormal
 
 from tqdm.auto import tqdm 
@@ -72,6 +73,9 @@ class cytoone(nn.Module):
 
         self.optimizer = None
         self.batch_embedding = None
+        self.RECON_list = []
+        self.KLD_list = []
+        self.MMD_list = []
 
         self.log_interval = 10
 
@@ -119,17 +123,17 @@ class cytoone(nn.Module):
                                                                     batch_embedding=self.batch_embedding,
                                                                     xs=xs,
                                                                     mode='random') 
-            x_dists = ZeroInflatedSoftplusNormal(loc=x_mu,
+            x_dists = Independent(ZeroInflatedSoftplusNormal(loc=x_mu,
                                                 scale=torch.exp(0.5*x_log_var),
-                                                gate_logits=x_gate_logit)
+                                                gate_logits=x_gate_logit), 1)
         else: 
             x_mu, x_log_var, kl_losses, zs = self.decoder(z=z,
                                                         batch_index=target_batch_index,
                                                         batch_embedding=self.batch_embedding,
                                                         xs=xs,
                                                         mode='random') 
-            x_dists = Normal(loc=x_mu,
-                            scale=torch.exp(0.5*x_log_var)) 
+            x_dists = Independent(Normal(loc=x_mu,
+                                    scale=torch.exp(0.5*x_log_var)), 1)
 
         return x_dists, kl_losses, zs
 
@@ -154,29 +158,44 @@ class cytoone(nn.Module):
                       source_batch_index: torch.tensor):
         
         # Likelihood 
-        log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
+        log_likelihood = x_dists.log_prob(cell_by_gene_counts).mean()
 
-        kl_loss = 0
+        KLD = 0
         for k in kl_losses:
-            kl_loss += k
+            KLD += k
         
         # MMD 
-        batch_loss = 0
-        for z in zs:
-            batch_l = mmd_loss(z=z, batch_index=source_batch_index)
-            batch_loss += batch_l
+        MMD = 0
+        if self.n_batches > 1:
+            for z in zs:
+                batch_l = mmd_loss(z=z, batch_index=source_batch_index)
+                MMD += batch_l
 
-        return -log_likelihood + kl_loss + batch_loss
+        return -log_likelihood + KLD + MMD, log_likelihood.detach().cpu().numpy(), KLD.detach().cpu().numpy(), MMD.detach().cpu().numpy()
 
 
     def training_loop(self,
                       n_epoches: int=20,
-                      n_strata: int=100):
+                      n_strata: int=100,
+                      early_stop_pval: float=0.5):
         self.train()
         for epoch in range(n_epoches):
             # For epoch, we randomly suffule the data and stratify 
             adata_w_batch_strata = generate_strata(adata=self.adata,
                                                    n_strata=n_strata)
+            RECON_epoch_list = []
+            KLD_epoch_list = []
+            MMD_epoch_list = []
+            # Starting from the 3rd epoch, we test if convergence has been achieved 
+            if epoch >= 2:
+                KLD_previous_2 = np.array(self.KLD_list[epoch-2])
+                KLD_previous_1 = np.array(self.KLD_list[epoch-1])
+                p_val = ks_2samp(KLD_previous_2, KLD_previous_1).pvalue
+                if p_val > early_stop_pval:
+                    print("="*30)
+                    print("No improvement in the classification task detected. Stop early at epoch {}".format(epoch-1))
+                    print("="*30)
+                    break
             train_loss = 0.0
             for minibatch_ind in range(n_strata):
                 cell_by_gene_counts, source_batch_index, target_batch_index = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
@@ -188,12 +207,15 @@ class cytoone(nn.Module):
                                               target_batch_index=target_batch_index)
                 
                 self.optimizer.zero_grad()
-                loss = self.loss_function(x_dists=x_dists,
-                                          cell_by_gene_counts=cell_by_gene_counts,
-                                          kl_losses=kl_losses,
-                                          zs=zs,
-                                          source_batch_index=source_batch_index)
+                loss, RECON, KLD, MMD = self.loss_function(x_dists=x_dists,
+                                                    cell_by_gene_counts=cell_by_gene_counts,
+                                                    kl_losses=kl_losses,
+                                                    zs=zs,
+                                                    source_batch_index=source_batch_index)
                 loss.backward()
+                RECON_epoch_list.append(RECON)
+                KLD_epoch_list.append(KLD)
+                MMD_epoch_list.append(MMD)
                 train_loss += loss.item()
                 self.optimizer.step()
                 # We gradually decrease the temperature so that the posterior would approach a bernoulli 
@@ -207,6 +229,9 @@ class cytoone(nn.Module):
                                 loss.item()))
             print('====> Epoch: {} Average loss: {:.4f}'.format(
                     epoch, train_loss / n_strata))
+            self.RECON_list.append(np.array(RECON_epoch_list))
+            self.KLD_list.append(np.array(KLD_epoch_list))
+            self.MMD_list.append(np.array(MMD_epoch_list))
     
 
     
