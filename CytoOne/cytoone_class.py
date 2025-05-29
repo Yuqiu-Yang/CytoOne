@@ -102,27 +102,32 @@ class cytoone(nn.Module):
 
     def encode(self,
                cell_by_gene_counts,
-               source_batch_index):
+               source_batch_index,
+               mode="random"):
         # Encoder will generate the mu and log_var of the top-level z
         # xs is a list of output of residule blocks
         mu, log_var, xs = self.encoder(x=cell_by_gene_counts,
                                         batch_index=source_batch_index,
                                         batch_embedding=self.batch_embedding)
-        # Randomly sample top-level z 
-        z = reparameterize(mu, torch.exp(0.5 * log_var))
+        if mode=='fix':
+            z = reparameterize(mu, 0)
+        else:
+            # Randomly sample top-level z 
+            z = reparameterize(mu, torch.exp(0.5 * log_var))
         return mu, log_var, xs, z
 
     def decode(self,
                z,
                target_batch_index,
-               xs):
+               xs,
+               mode='random'):
         # Based on the zero inflated, we use different likelihood 
         if self.zero_inflated:
             x_mu, x_log_var, x_gate_logit, kl_losses, zs = self.decoder(z=z,
                                                                     batch_index=target_batch_index,
                                                                     batch_embedding=self.batch_embedding,
                                                                     xs=xs,
-                                                                    mode='random') 
+                                                                    mode=mode) 
             x_dists = Independent(ZeroInflatedSoftplusNormal(loc=x_mu,
                                                 scale=torch.exp(0.5*x_log_var),
                                                 gate_logits=x_gate_logit), 1)
@@ -131,7 +136,7 @@ class cytoone(nn.Module):
                                                         batch_index=target_batch_index,
                                                         batch_embedding=self.batch_embedding,
                                                         xs=xs,
-                                                        mode='random') 
+                                                        mode=mode) 
             x_dists = Independent(Normal(loc=x_mu,
                                     scale=torch.exp(0.5*x_log_var)), 1)
 
