@@ -12,11 +12,9 @@ class Decoder(nn.Module):
                  batch_embedding_dim: int=2, 
                  latent_dims: list=[2, 10],
                  hidden_dims: list=[[128, 256], [256, 512]],
-                 drop_out_p: float=0.2,
-                 zero_inflated: bool=True):
+                 drop_out_p: float=0.2):
         super().__init__()
 
-        self.zero_inflated=zero_inflated
         self.decoder_tower = nn.ModuleList()
         self.condition_z = nn.ModuleList()
         self.condition_xz = nn.ModuleList()
@@ -44,20 +42,14 @@ class Decoder(nn.Module):
             ))
             current_d = latent_d*2
         
-        if zero_inflated:
-            self.recon = nn.Sequential(
-                ResidualBlock(in_dim=current_d+batch_embedding_dim,
-                              out_dim=current_d+batch_embedding_dim,
-                              hidden_dims=hidden_dims[-1]),
-                nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
-            )
-        else:
-            self.recon = nn.Sequential(
-                ResidualBlock(in_dim=current_d+batch_embedding_dim,
-                              out_dim=current_d+batch_embedding_dim,
-                              hidden_dims=hidden_dims[-1]),
-                nn.Linear(current_d+batch_embedding_dim, 2*input_dim)
-            ) 
+        
+        self.recon = nn.Sequential(
+            ResidualBlock(in_dim=current_d+batch_embedding_dim,
+                            out_dim=current_d+batch_embedding_dim,
+                            hidden_dims=hidden_dims[-1]),
+            nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
+        )
+        
 
     def forward(self, z, 
                 batch_index, 
@@ -94,12 +86,9 @@ class Decoder(nn.Module):
 
         batch_emb = batch_embedding(batch_index)
         decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
-        if self.zero_inflated:
-            x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
-            return x_mu, x_log_var, x_gate_logit, kl_losses, zs
-        else:
-            x_mu, x_log_var = self.recon(decoder_out).chunk(2, dim=1)
-            return x_mu, x_log_var, kl_losses, zs
+        
+        x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
+        return x_mu, x_log_var, x_gate_logit, kl_losses, zs
 
         
 

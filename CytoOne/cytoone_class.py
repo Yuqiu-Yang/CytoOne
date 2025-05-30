@@ -54,8 +54,7 @@ class cytoone(nn.Module):
                             "batch_embedding_dim": batch_embedding_dim,  
                             "latent_dims": latent_dims[::-1],
                             "hidden_dims": decoder_hidden_dims,
-                            "drop_out_p": drop_out_p,
-                            "zero_inflated": zero_inflated}
+                            "drop_out_p": drop_out_p}
         
         self.zero_inflated = zero_inflated
 
@@ -140,6 +139,8 @@ class cytoone(nn.Module):
                                                         batch_embedding=self.batch_embedding,
                                                         xs=xs,
                                                         mode=mode) 
+            
+            
             x_dists = Independent(Normal(loc=x_mu,
                                     scale=torch.exp(0.5*x_log_var)), 1)
 
