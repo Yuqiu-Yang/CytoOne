@@ -132,7 +132,7 @@ class cytoone(nn.Module):
                                                                     mode=mode) 
             x_dists = Independent(ZeroInflatedSoftplusNormal(loc=x_mu,
                                                 scale=torch.exp(0.5*x_log_var),
-                                                gate_logits=x_gate_logit), 1)
+                                                gate_logits=x_gate_logit), 0)
         else: 
             x_mu, x_log_var, kl_losses, zs = self.decoder(z=z,
                                                         batch_index=target_batch_index,
@@ -142,7 +142,7 @@ class cytoone(nn.Module):
             
             
             x_dists = Independent(Normal(loc=x_mu,
-                                    scale=torch.exp(0.5*x_log_var)), 1)
+                                    scale=torch.exp(0.5*x_log_var)), 0)
 
         return x_dists, kl_losses, zs
 
@@ -167,7 +167,7 @@ class cytoone(nn.Module):
                       source_batch_index: torch.tensor):
         
         # Likelihood 
-        log_likelihood = x_dists.log_prob(cell_by_gene_counts).mean()
+        log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
 
         KLD = 0
         for k in kl_losses:
