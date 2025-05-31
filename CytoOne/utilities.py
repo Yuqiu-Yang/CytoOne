@@ -182,31 +182,35 @@ def load_stratum(adata_w_batch_strata: pd.DataFrame,
                  stratum_id: int, 
                  target_batch_index: Optional[int]=None,
                  model_device='cpu') -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
-    """_summary_
+    """Load a stratum given its id 
 
     Parameters
     ----------
     adata_w_batch_strata : pd.DataFrame
-        _description_
+        A dataframe with batch and strata information 
     stratum_id : int
-        _description_
+        The id for the stratum to load 
     target_batch_index : Optional[int], optional
-        _description_, by default None
+        If None, it would default to the current batch index. If not, it can be used for batch correction, by default None
     model_device : str, optional
-        _description_, by default 'cpu'
+        The model device , by default 'cpu'
 
     Returns
     -------
     Tuple[torch.tensor, torch.tensor, torch.tensor]
-        _description_
+        Tensor for cell-by-gene, source batch index, target batch index 
     """
+    # Extract the patch 
+    # Other than the protein channels it will also contain stratum and batch 
     cell_patch = adata_w_batch_strata.loc[adata_w_batch_strata['stratum'] == stratum_id, :].copy()
+    # Convert batch to tensor
     source_batch_index = torch.tensor(cell_patch['batch_index'].values, dtype=torch.int64, device=model_device)
     if target_batch_index is None:
         target_batch_index = source_batch_index.clone()
     else:
+        # Useful for batch correction 
         target_batch_index = torch.ones_like(source_batch_index)*target_batch_index
-
+    # Only keep counts 
     cell_patch.drop(columns=['stratum', 'batch_index'], inplace=True)
     cell_by_gene_counts = torch.tensor(cell_patch.values, dtype=torch.float32, device=model_device)
     
@@ -214,9 +218,23 @@ def load_stratum(adata_w_batch_strata: pd.DataFrame,
 
     
 class ResidualBlock(nn.Module):
-    def __init__(self, in_dim, out_dim, 
-                 hidden_dims=[512, 256],
-                 drop_out_p=0.2):
+    def __init__(self, in_dim: int, 
+                 out_dim: int, 
+                 hidden_dims: list,
+                 drop_out_p: float) -> None:
+        """_summary_
+
+        Parameters
+        ----------
+        in_dim : int
+            _description_
+        out_dim : int
+            _description_
+        hidden_dims : list
+            _description_
+        drop_out_p : float
+            _description_
+        """
         super().__init__()
 
         self.skip_proj = nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
@@ -242,29 +260,90 @@ class ResidualBlock(nn.Module):
         return skip_x + 0.1*x
 
 
-def kl_delta(delta_mu, delta_log_var, mu, log_var):
+def kl_delta(delta_mu: torch.tensor,
+             delta_log_var: torch.tensor,
+             mu: torch.tensor,
+             log_var: torch.tensor) -> torch.tensor:
+    """The KL for all other z's than the very top one 
+        The output of the encoder is configured to output delta changes 
+    Parameters
+    ----------
+    delta_mu : torch.tensor
+        Delta of the mu
+    delta_log_var : torch.tensor
+        Delta of the log variance 
+    mu : torch.tensor
+        Base mu 
+    log_var : torch.tensor
+        Base log variance 
+
+    Returns
+    -------
+    torch.tensor
+        The KL divergence 
+    """
     var = torch.exp(log_var)
     delta_var = torch.exp(delta_log_var)
-
     loss = -0.5 * torch.sum(1 + delta_log_var - delta_mu ** 2 / var - delta_var, dim=[1])
     return torch.mean(loss, dim=0)
 
 
 def kl_standard(mu: torch.tensor,
                 log_var: torch.tensor) -> torch.tensor:
+    """KL divergence between Isotropic normal 
+
+    Parameters
+    ----------
+    mu : torch.tensor
+        Base mu
+    log_var : torch.tensor
+        Base log variance 
+
+    Returns
+    -------
+    torch.tensor
+        The KL divergence 
+    """
+    # KL(q||p) p=N(0,1) \int q log q/p
     loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - torch.exp(log_var), dim=[1])
     return torch.mean(loss, dim=0)
 
 
 def reparameterize(mu: torch.tensor,
-                   std: torch.tensor):
+                   std: torch.tensor) -> torch.tensor:
+    """Sample normal using the reparameterization trick
+
+    Parameters
+    ----------
+    mu : torch.tensor
+        Mean
+    std : torch.tensor
+        Standard deviation 
+
+    Returns
+    -------
+    torch.tensor
+        Normal sample 
+    """
     z = torch.randn_like(mu) * std + mu
     return z
 
 
-def compute_mmd(x, y):
-    """
-    Compute Maximum Mean Discrepancy between two distributions
+def compute_mmd(x: torch.tensor,
+                y: torch.tensor) -> torch.tensor:
+    """Compute maximum mean discrapency between two tensors 
+
+    Parameters
+    ----------
+    x : torch.tensor
+        An N*p tensor
+    y : torch.tensor
+        An M*p tensor 
+
+    Returns
+    -------
+    torch.tensor
+        MMD with RBF kernel 
     """
     xx = torch.mm(x, x.t())
     yy = torch.mm(y, y.t())
@@ -272,16 +351,17 @@ def compute_mmd(x, y):
     
     # RBF Kernel
     bandwidth_range = [0.01, 0.1, 1, 10]
+    # k(x,x)
     xx_sum = torch.diag(xx).unsqueeze(1).expand(xx.size(0), xx.size(0))
     xx_rbf = xx_sum + xx_sum.t() - 2*xx
-    
+    # k(y,y)
     yy_sum = torch.diag(yy).unsqueeze(1).expand(yy.size(0), yy.size(0))
     yy_rbf = yy_sum + yy_sum.t() - 2*yy
-    
+    # k(x,y)
     xy_sum_1 = torch.diag(xx).unsqueeze(1).expand(xx.size(0), yy.size(0))
     xy_sum_2 = torch.diag(yy).unsqueeze(0).expand(xx.size(0), yy.size(0))
     xy_rbf = xy_sum_1 + xy_sum_2 - 2*xy
-    
+    # Sum over differnt bandwidthes
     mmd = 0
     for bandwidth in bandwidth_range:
         xx_kernel = torch.exp(-xx_rbf / (2 * bandwidth ** 2))
@@ -293,19 +373,34 @@ def compute_mmd(x, y):
     return mmd
 
 
-def mmd_loss(z, batch_index):
+def mmd_loss(z: torch.tensor,
+             batch_index: torch.tensor) -> torch.tensor:
+    """Compute MMD between all pairs of batches 
+
+    Parameters
+    ----------
+    z : torch.tensor
+        The latent embedding 
+    batch_index : torch.tensor
+        The corresponding batch indices 
+
+    Returns
+    -------
+    torch.tensor
+        MMD 
+    """
     unique_batches = batch_index.unique()
     mmd_sum = 0
     count = 0
-    
+    # For each unique pair
     for i in range(len(unique_batches)):
         for j in range(i + 1, len(unique_batches)):
             idx_i = (batch_index == unique_batches[i])
             idx_j = (batch_index == unique_batches[j])
-            
+            # Extract embedding 
             zi = z[idx_i]
             zj = z[idx_j]
-            
+            # Compute MMD 
             mmd = compute_mmd(x=zi,
                               y=zj)
             

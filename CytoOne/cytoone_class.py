@@ -14,11 +14,11 @@ from CytoOne.utilities import import_data, generate_strata,\
                              load_stratum, reparameterize, \
                              kl_standard, mmd_loss
 
-from torch.distributions import Normal, Independent
-from CytoOne.basic_distributions import ZeroInflatedSoftplusNormal
+from torch.distributions import Independent
+from CytoOne.basic_distributions import QuasiZeroInflatedSoftplusNormal
 
 from tqdm.auto import tqdm 
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 
 class cytoone(nn.Module):
@@ -33,31 +33,31 @@ class cytoone(nn.Module):
                  encoder_hidden_dims: list=[[512, 256], [256, 128]],
                  decoder_hidden_dims: list=[[128, 256], [256, 512]],
                  drop_out_p: float=0.2,
-                 model_device: Optional[Union[str, torch.device]] = None):
+                 gamma: float=1.0,
+                 model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
-
+        # Parameters for importing data 
         self.import_data_par = {"batch_index_col": batch_index_col,
                                 "celltype_col": celltype_col,
                                 "normalize": normalize,
                                 "dr": dr,
                                 "zero_inflated": zero_inflated}
-        self.adata = None
-        self.n_batches = None
-
+        # Parameters for initializing the encoder
         self.encoder_par = {"input_dim": None,
                             "batch_embedding_dim": batch_embedding_dim, 
                             "latent_dims": latent_dims,
                             "hidden_dims": encoder_hidden_dims,
                             "drop_out_p": drop_out_p}
-        
+        # Parameters for initializing the decoder
         self.decoder_par = {"input_dim": None,
                             "batch_embedding_dim": batch_embedding_dim,  
                             "latent_dims": latent_dims[::-1],
                             "hidden_dims": decoder_hidden_dims,
                             "drop_out_p": drop_out_p}
-        
+        # Data
+        self.adata = None
+        self.n_batches = None
         self.zero_inflated = zero_inflated
-
         # Set model device
         if model_device is None:
             self.model_device = torch.device(
@@ -66,24 +66,27 @@ class cytoone(nn.Module):
             self.model_device = torch.device(model_device)
         else:
             self.model_device = model_device
-
+        # Main modules 
         self.encoder = None
         self.decoder = None
-
-        self.optimizer = None
+        self.noise_log_normal_var = None
         self.batch_embedding = None
-        # Add KL annealing 
-
-        # 
+        # Optimization 
+        self.optimizer = None 
+        self.init_beta = 0.0
+        self.max_beta = 1.0
+        self.current_beta = self.init_beta
+        self.ANNEAL_RATE = 0.00003
+        self.gamma = gamma
+        self.log_interval = 10
+        # Monitoring loss 
         self.RECON_list = []
         self.KLD_list = []
         self.MMD_list = []
 
-        self.log_interval = 10
-
     def import_data(self,
                     cell_by_gene: Union[str, pd.DataFrame],
-                    cell_metadata: Union[str, pd.DataFrame]):
+                    cell_metadata: Union[str, pd.DataFrame]) -> None:
         self.adata = import_data(cell_by_gene=cell_by_gene,
                                  cell_metadata=cell_metadata,
                                  **self.import_data_par)
@@ -96,16 +99,23 @@ class cytoone(nn.Module):
         self.decoder = Decoder(**self.decoder_par)
 
         self.batch_embedding = nn.Embedding(self.n_batches, self.encoder_par['batch_embedding_dim'])
-        
-        self.optimizer = optim.Adam([{'params': self.encoder.parameters()},
-                                    {'params': self.decoder.parameters()}], lr=1e-3)
-
+        if not self.zero_inflated:
+            self.noise_log_normal_var = nn.Parameter(-0.5*torch.ones(1), dtype=torch.float32,
+                                                        requires_grad=True)
+            self.optimizer = optim.Adam([{'params': self.encoder.parameters()},
+                                        {'params': self.decoder.parameters()},
+                                        {'params': self.batch_embedding.parameters()},
+                                        {'params': self.noise_log_normal_var}], lr=1e-3)
+        else: 
+            self.optimizer = optim.Adam([{'params': self.encoder.parameters()},
+                                        {'params': self.decoder.parameters()},
+                                        {'params': self.batch_embedding.parameters()}], lr=1e-3)
         self.to(self.model_device)
 
     def encode(self,
-               cell_by_gene_counts,
-               source_batch_index,
-               mode="random"):
+               cell_by_gene_counts: torch.tensor,
+               source_batch_index: torch.tensor,
+               mode: str="random") -> Tuple[torch.tensor, torch.tensor, list, torch.tensor]:
         # Encoder will generate the mu and log_var of the top-level z
         # xs is a list of output of residule blocks
         mu, log_var, xs = self.encoder(x=cell_by_gene_counts,
@@ -119,30 +129,25 @@ class cytoone(nn.Module):
         return mu, log_var, xs, z
 
     def decode(self,
-               z,
-               target_batch_index,
-               xs,
-               mode='random'):
+               z: torch.tensor,
+               target_batch_index: torch.tensor,
+               xs: list,
+               mode: str='random') -> Tuple[torch.distributions.Distribution, list, list]:
         # Based on the zero inflated, we use different likelihood 
+        x_mu, x_log_var, x_gate_logit, kl_losses, zs = self.decoder(z=z,
+                                                                batch_index=target_batch_index,
+                                                                batch_embedding=self.batch_embedding,
+                                                                xs=xs,
+                                                                mode=mode) 
         if self.zero_inflated:
-            x_mu, x_log_var, x_gate_logit, kl_losses, zs = self.decoder(z=z,
-                                                                    batch_index=target_batch_index,
-                                                                    batch_embedding=self.batch_embedding,
-                                                                    xs=xs,
-                                                                    mode=mode) 
-            x_dists = Independent(ZeroInflatedSoftplusNormal(loc=x_mu,
-                                                scale=torch.exp(0.5*x_log_var),
-                                                gate_logits=x_gate_logit), 0)
-        else: 
-            x_mu, x_log_var, kl_losses, zs = self.decoder(z=z,
-                                                        batch_index=target_batch_index,
-                                                        batch_embedding=self.batch_embedding,
-                                                        xs=xs,
-                                                        mode=mode) 
-            
-            
-            x_dists = Independent(Normal(loc=x_mu,
-                                    scale=torch.exp(0.5*x_log_var)), 0)
+            normal_scale = None
+        else:
+            normal_scale = torch.exp(0.5*self.noise_log_normal_var)
+        
+        x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
+                                            scale=torch.exp(0.5*x_log_var),
+                                            gate_logits=x_gate_logit,
+                                            normal_scale=normal_scale), 0)
 
         return x_dists, kl_losses, zs
 
@@ -180,7 +185,7 @@ class cytoone(nn.Module):
                 batch_l = mmd_loss(z=z, batch_index=source_batch_index)
                 MMD += batch_l
 
-        return -log_likelihood + KLD + MMD, log_likelihood.detach().cpu().numpy(), KLD.detach().cpu().numpy(), MMD.detach().cpu().numpy()
+        return -log_likelihood + self.current_beta*KLD + self.gamma*MMD, log_likelihood.detach().cpu().numpy(), KLD.detach().cpu().numpy(), MMD.detach().cpu().numpy()
 
 
     def training_loop(self,
@@ -197,12 +202,12 @@ class cytoone(nn.Module):
             MMD_epoch_list = []
             # Starting from the 3rd epoch, we test if convergence has been achieved 
             if epoch >= 2:
-                KLD_previous_2 = np.array(self.KLD_list[epoch-2])
-                KLD_previous_1 = np.array(self.KLD_list[epoch-1])
-                p_val = ks_2samp(KLD_previous_2, KLD_previous_1).pvalue
+                RECON_previous_2 = np.array(self.RECON_list[epoch-2])
+                RECON_previous_1 = np.array(self.RECON_list[epoch-1])
+                p_val = ks_2samp(RECON_previous_2, RECON_previous_1).pvalue
                 if p_val > early_stop_pval:
                     print("="*30)
-                    print("No improvement in the classification task detected. Stop early at epoch {}".format(epoch-1))
+                    print("No improvement in the reconstruction task detected. Stop early at epoch {}".format(epoch-1))
                     print("="*30)
                     break
             train_loss = 0.0
@@ -228,8 +233,9 @@ class cytoone(nn.Module):
                 train_loss += loss.item()
                 self.optimizer.step()
                 # We gradually decrease the temperature so that the posterior would approach a bernoulli 
-                # if minibatch_ind % 100 == 1:
-                #     self.current_temperature = np.maximum(self.current_temperature * np.exp(-self.ANNEAL_RATE * minibatch_ind), self.min_temperature) 
+                if minibatch_ind % 100 == 1:
+                    self.current_beta = np.minimum(self.current_beta * (1-np.exp(-self.ANNEAL_RATE * minibatch_ind)), 
+                                                   self.max_beta) 
                 # Print training information 
                 if minibatch_ind % self.log_interval == 0:
                     print('Train Epoch: {} [{}/{} ({:.0f}%)]tLoss: {:.6f}'.format(
@@ -242,6 +248,11 @@ class cytoone(nn.Module):
             self.KLD_list.append(np.array(KLD_epoch_list))
             self.MMD_list.append(np.array(MMD_epoch_list))
     
+    def save_model(self):
+        pass 
+    
+    def load_model(self):
+        pass 
 
     
     

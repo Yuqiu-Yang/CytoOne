@@ -6,7 +6,6 @@ from CytoOne.utilities import ResidualBlock, reparameterize, kl_delta
 
 
 class Decoder(nn.Module):
-
     def __init__(self, 
                  input_dim: int,
                  batch_embedding_dim: int=2, 

@@ -5,7 +5,6 @@ from numpy.polynomial.hermite import hermgauss
 # PyTorch
 import torch
 import torch.nn as nn 
-from torch import Tensor
 from torch.distributions import constraints
 from torch.distributions.utils import (
     broadcast_all,
@@ -61,7 +60,7 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
                 "QuasiZeroInflatedDistribution expected empty "
                 "base_dist.event_shape but got {}".format(base_dist.event_shape)
             )
-        if normal_scale is None:
+        if (normal_scale is None) or (normal_scale <= 0):
             self.normal_scale = torch.zeros(1)
             self.is_quasi = False
         else:
@@ -110,10 +109,10 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
         if not self.is_quasi:
             if "gate" in self.__dict__:
                 gate, value = broadcast_all(self.gate, value)
-                log_prob = torch.where(value == 0, (gate).log(), (-gate).log1p() + self.base_dist.log_prob(value+1e-7))
+                log_prob = torch.where(value <= 0, (gate).log(), (-gate).log1p() + self.base_dist.log_prob(value+1e-7))
             else:
                 gate_logits, value = broadcast_all(self.gate_logits, value)
-                log_prob = torch.where(value == 0, 
+                log_prob = torch.where(value <= 0, 
                                     gate_logits-softplus(gate_logits), 
                                     -gate_logits + self.base_dist.log_prob(value+1e-7)-softplus(-gate_logits))
         else:
@@ -180,7 +179,6 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
         )
         new._validate_args = self._validate_args
         return new
-       
 
 class QuasiZeroInflatedSoftplusNormal(QuasiZeroInflatedPositiveDistribution):
     arg_constraints = {
@@ -197,7 +195,6 @@ class QuasiZeroInflatedSoftplusNormal(QuasiZeroInflatedPositiveDistribution):
         base_dist = SoftplusNormal(loc=loc, 
                           scale=scale, validate_args=False)
         base_dist._validate_args = validate_args
-
         super().__init__(
             base_dist, gate=gate, gate_logits=gate_logits,
             normal_scale=normal_scale, quadrature_degree=quadrature_degree,
