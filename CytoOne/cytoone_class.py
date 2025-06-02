@@ -163,7 +163,8 @@ class cytoone(nn.Module):
                                              target_batch_index=target_batch_index,
                                              xs=xs)
         # KL divergence top-level 
-        kl_losses.append(kl_standard(mu=mu, log_var=log_var)) 
+        kl_losses = [kl_standard(mu=mu, log_var=log_var)] + kl_losses
+        # kl_losses.append(kl_standard(mu=mu, log_var=log_var)) 
         return x_dists, kl_losses, zs
 
     def loss_function(self,
@@ -177,8 +178,8 @@ class cytoone(nn.Module):
         log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
 
         KLD = 0.0
-        for k in kl_losses:
-            KLD += k
+        for i, k in enumerate(kl_losses):
+            KLD += k * [0.2, 1.0][i]
         
         # MMD 
         MMD = 0.0
