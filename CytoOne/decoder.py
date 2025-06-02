@@ -27,7 +27,8 @@ class Decoder(nn.Module):
             self.condition_z.append(nn.Sequential(
                 ResidualBlock(in_dim=latent_d, 
                               out_dim=latent_d,
-                              hidden_dims=[latent_d,latent_d]),
+                              hidden_dims=[latent_d,latent_d],
+                              drop_out_p=drop_out_p),
                 nn.GELU(),
                 nn.Linear(latent_d, 2*latent_d)
             ))
@@ -35,7 +36,8 @@ class Decoder(nn.Module):
             self.condition_xz.append(nn.Sequential(
                 ResidualBlock(in_dim=latent_d*2,
                               out_dim=latent_d,
-                              hidden_dims=[latent_d,latent_d]),
+                              hidden_dims=[latent_d,latent_d],
+                              drop_out_p=drop_out_p),
                 nn.GELU(),
                 nn.Linear(latent_d, 2*latent_d)
             ))
@@ -45,7 +47,8 @@ class Decoder(nn.Module):
         self.recon = nn.Sequential(
             ResidualBlock(in_dim=current_d+batch_embedding_dim,
                             out_dim=current_d+batch_embedding_dim,
-                            hidden_dims=hidden_dims[-1]),
+                            hidden_dims=hidden_dims[-1],
+                            drop_out_p=drop_out_p),
             nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
         )
         

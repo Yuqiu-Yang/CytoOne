@@ -34,6 +34,7 @@ class cytoone(nn.Module):
                  decoder_hidden_dims: list=[[128, 256], [256, 512]],
                  drop_out_p: float=0.2,
                  gamma: float=1.0,
+                 anneal_percent: float=0.0,
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
         # Parameters for importing data 
@@ -73,10 +74,11 @@ class cytoone(nn.Module):
         self.batch_embedding = None
         # Optimization 
         self.optimizer = None 
-        self.init_beta = 0.0
-        self.max_beta = 1.0
-        self.current_beta = self.init_beta
-        self.ANNEAL_RATE = 0.00003
+        self.anneal_percent=anneal_percent
+        if self.anneal_percent <= 0.0:
+            self.beta = 1.0
+        else:
+            self.beta = 0.0
         self.gamma = gamma
         self.log_interval = 10
         # Monitoring loss 
@@ -100,8 +102,8 @@ class cytoone(nn.Module):
 
         self.batch_embedding = nn.Embedding(self.n_batches, self.encoder_par['batch_embedding_dim'])
         if not self.zero_inflated:
-            self.noise_log_normal_var = nn.Parameter(-0.5*torch.ones(1), dtype=torch.float32,
-                                                        requires_grad=True)
+            neg_x = self.adata.X[self.adata.X<=0].copy().reshape(-1)
+            self.noise_log_normal_var = nn.Parameter(np.log(np.var(np.concatenate((neg_x, -neg_x))))*torch.ones(1), requires_grad=True)
             self.optimizer = optim.Adam([{'params': self.encoder.parameters()},
                                         {'params': self.decoder.parameters()},
                                         {'params': self.batch_embedding.parameters()},
@@ -174,24 +176,27 @@ class cytoone(nn.Module):
         # Likelihood 
         log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
 
-        KLD = 0
+        KLD = 0.0
         for k in kl_losses:
             KLD += k
         
         # MMD 
-        MMD = 0
+        MMD = 0.0
         if self.n_batches > 1:
             for z in zs:
                 batch_l = mmd_loss(z=z, batch_index=source_batch_index)
                 MMD += batch_l
+        else:
+            MMD = torch.zeros(1, dtype=torch.float32)
 
-        return -log_likelihood + self.current_beta*KLD + self.gamma*MMD, log_likelihood.detach().cpu().numpy(), KLD.detach().cpu().numpy(), MMD.detach().cpu().numpy()
+        return -log_likelihood + self.beta*KLD + self.gamma*MMD, log_likelihood.detach().cpu().numpy().item(), KLD.detach().cpu().numpy().item(), MMD.detach().cpu().numpy().item()
 
 
     def training_loop(self,
                       n_epoches: int=20,
                       n_strata: int=100,
                       early_stop_pval: float=0.5):
+        total_anneal_steps = np.round(n_epoches * n_strata * self.anneal_percent)
         self.train()
         for epoch in range(n_epoches):
             # For epoch, we randomly suffule the data and stratify 
@@ -202,9 +207,9 @@ class cytoone(nn.Module):
             MMD_epoch_list = []
             # Starting from the 3rd epoch, we test if convergence has been achieved 
             if epoch >= 2:
-                RECON_previous_2 = np.array(self.RECON_list[epoch-2])
-                RECON_previous_1 = np.array(self.RECON_list[epoch-1])
-                p_val = ks_2samp(RECON_previous_2, RECON_previous_1).pvalue
+                KLD_previous_2 = np.array(self.KLD_list[epoch-2])
+                KLD_previous_1 = np.array(self.KLD_list[epoch-1])
+                p_val = ks_2samp(KLD_previous_2, KLD_previous_1).pvalue
                 if p_val > early_stop_pval:
                     print("="*30)
                     print("No improvement in the reconstruction task detected. Stop early at epoch {}".format(epoch-1))
@@ -232,10 +237,10 @@ class cytoone(nn.Module):
                 MMD_epoch_list.append(MMD)
                 train_loss += loss.item()
                 self.optimizer.step()
-                # We gradually decrease the temperature so that the posterior would approach a bernoulli 
-                if minibatch_ind % 100 == 1:
-                    self.current_beta = np.minimum(self.current_beta * (1-np.exp(-self.ANNEAL_RATE * minibatch_ind)), 
-                                                   self.max_beta) 
+                # KL Annealing 
+                if self.anneal_percent > 0:
+                    self.beta = np.minimum(1.0, (n_strata*epoch+minibatch_ind)/total_anneal_steps)
+
                 # Print training information 
                 if minibatch_ind % self.log_interval == 0:
                     print('Train Epoch: {} [{}/{} ({:.0f}%)]tLoss: {:.6f}'.format(
