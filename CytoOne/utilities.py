@@ -1,4 +1,6 @@
+# Data IO
 import os 
+import json
 # Data manipulation
 import scanpy as sc 
 import numpy as np 
@@ -407,3 +409,12 @@ def mmd_loss(z: torch.tensor,
             mmd_sum += mmd
             count += 1
     return mmd_sum / count if count > 0 else 0
+
+class JSONEncoder(json.JSONEncoder):
+    """This class is used to save dictionary of pd.DataFrame to a json file
+
+    """
+    def default(self, obj):
+        if hasattr(obj, 'to_json'):
+            return obj.to_json(orient='records')
+        return json.JSONEncoder.default(self, obj)
