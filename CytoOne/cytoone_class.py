@@ -79,6 +79,7 @@ class cytoone(nn.Module):
         self.optimizer = None 
         # self.anneal_percent=anneal_percent
         self.beta = [i/np.max(latent_dims) for i in latent_dims]
+        self.beta[-1] = np.maximum(self.beta[-1], 0.1)
         # if self.anneal_percent <= 0.0:
         #     self.beta = 1.0
         # else:
