@@ -52,45 +52,57 @@ class Decoder(nn.Module):
             nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
         )
         
+        self.decoder_elevator = nn.Sequential(
+            nn.Linear(latent_dims[0]+batch_embedding_dim, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 512),
+            nn.LayerNorm(512),
+            nn.GELU(),
+            nn.Linear(512, 3*input_dim)
+        )
 
     def forward(self, z, 
                 batch_index, 
                 batch_embedding,
                 xs=None, 
-                mode="random"):
+                mode="random",
+                pretrain=False):
 
         b, w = z.shape
-
-        decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
-        
-        zs = [z]
-        
-        kl_losses = []
-
-        for i in range(len(self.decoder_tower)):
-
-            z_sample = torch.cat([decoder_out, z], dim=1)
-            decoder_out = self.decoder_tower[i](z_sample)
-
-            mu, log_var = self.condition_z[i](decoder_out).chunk(2, dim=1)
-
-            if xs is not None:
-                delta_mu, delta_log_var = self.condition_xz[i](torch.cat([xs[i], decoder_out], dim=1)).chunk(2, dim=1)
-                kl_losses.append(kl_delta(delta_mu, delta_log_var, mu, log_var))
-                mu = mu + delta_mu
-                log_var = log_var + delta_log_var
-
-            if mode == "fix":
-                z = reparameterize(mu, 0)
-            else:
-                z = reparameterize(mu, torch.exp(0.5 * log_var))
-            zs.append(z)
-
         batch_emb = batch_embedding(batch_index)
-        decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
-        
-        x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
-        return x_mu, x_log_var, x_gate_logit, kl_losses, zs
+        zs = [z]
+        if pretrain:
+            direct_x_mu, direct_x_log_var, direct_x_gate_logit = self.decoder_elevator(torch.cat([z, batch_emb], dim=1)).chunk(3, dim=1)
+            return direct_x_mu, direct_x_log_var, direct_x_gate_logit, [], zs
+        else:
+            decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
+            kl_losses = []
+            for i in range(len(self.decoder_tower)):
+                z_sample = torch.cat([decoder_out, z], dim=1)
+                decoder_out = self.decoder_tower[i](z_sample)
+
+                mu, log_var = self.condition_z[i](decoder_out).chunk(2, dim=1)
+
+                if xs is not None:
+                    delta_mu, delta_log_var = self.condition_xz[i](torch.cat([xs[i], decoder_out], dim=1)).chunk(2, dim=1)
+                    kl_losses.append(kl_delta(delta_mu, delta_log_var, mu, log_var))
+                    mu = mu + delta_mu
+                    log_var = log_var + delta_log_var
+
+                if mode == "fix":
+                    z = reparameterize(mu, 0)
+                else:
+                    z = reparameterize(mu, torch.exp(0.5 * log_var))
+                zs.append(z)
+
+            decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
+            
+            x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
+            return x_mu, x_log_var, x_gate_logit, kl_losses, zs
 
         
 

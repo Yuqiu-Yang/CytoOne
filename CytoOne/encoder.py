@@ -23,27 +23,45 @@ class Encoder(nn.Module):
                                                     hidden_dims=hidden_d,
                                                     drop_out_p=drop_out_p))
             current_d = latent_d
+        
         # Generate mu and log_var for the top-level z 
         self.condition_x = nn.Sequential(
             nn.GELU(),
             nn.Linear(current_d, 2*current_d)
         )
 
+        self.encoder_elevator = nn.Sequential(
+            nn.Linear(input_dim+batch_embedding_dim, 512),
+            nn.LayerNorm(512),
+            nn.GELU(),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
+            nn.GELU(),
+            nn.Linear(128, 2*current_d)
+        )
+
     def forward(self, x, 
                 batch_index, 
-                batch_embedding):
-        
-        xs = []
+                batch_embedding,
+                pretrain):
         batch_emb = batch_embedding(batch_index)
         x = torch.cat([x, batch_emb], dim=1)
-        last_x = x
-        for e in self.encoder_tower:
-            x = e(x)
+        direct_mu, direct_log_var = self.encoder_elevator(x).chunk(2, dim=1)
+        if pretrain:
+            return  direct_mu, direct_log_var, []
+        else:
+            xs = []
             last_x = x
-            xs.append(x)
+            for e in self.encoder_tower:
+                x = e(x)
+                last_x = x
+                xs.append(x)
 
-        mu, log_var = self.condition_x(last_x).chunk(2, dim=1)
-        # xs is now [latent_dims[0], latent_dims[1], ...]
-        # we do not need the top-level for the decoder
-        # To make indexing a litter easier, we also reverse the order 
-        return mu, log_var, xs[:-1][::-1] 
+            mu, log_var = self.condition_x(last_x).chunk(2, dim=1)
+            # xs is now [latent_dims[0], latent_dims[1], ...]
+            # we do not need the top-level for the decoder
+            # To make indexing a litter easier, we also reverse the order 
+            return direct_mu + 0.1*mu, direct_log_var + 0.1*log_var, xs[:-1][::-1] 

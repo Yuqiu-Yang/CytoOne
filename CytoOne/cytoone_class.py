@@ -36,6 +36,7 @@ class cytoone(nn.Module):
                  decoder_hidden_dims: list=[[128, 256], [256, 512]],
                  drop_out_p: float=0.2,
                  gamma: float=1.0,
+                 top_beta: float=0.1,
                 #  anneal_percent: float=0.0,
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
@@ -79,7 +80,7 @@ class cytoone(nn.Module):
         self.optimizer = None 
         # self.anneal_percent=anneal_percent
         self.beta = [i/np.max(latent_dims) for i in latent_dims]
-        self.beta[-1] = np.maximum(self.beta[-1], 0.1)
+        self.beta[-1] = np.minimum(self.beta[-1], top_beta)
         # if self.anneal_percent <= 0.0:
         #     self.beta = 1.0
         # else:
@@ -126,12 +127,14 @@ class cytoone(nn.Module):
     def encode(self,
                cell_by_gene_counts: torch.tensor,
                source_batch_index: torch.tensor,
-               mode: str="random") -> Tuple[torch.tensor, torch.tensor, list, torch.tensor]:
+               mode: str="random",
+               pretrain: bool=False) -> Tuple[torch.tensor, torch.tensor, list, torch.tensor]:
         # Encoder will generate the mu and log_var of the top-level z
         # xs is a list of output of residule blocks
         mu, log_var, xs = self.encoder(x=cell_by_gene_counts,
                                         batch_index=source_batch_index,
-                                        batch_embedding=self.batch_embedding)
+                                        batch_embedding=self.batch_embedding,
+                                        pretrain=pretrain)
         if mode=='fix':
             z = reparameterize(mu, 0)
         else:
@@ -144,13 +147,15 @@ class cytoone(nn.Module):
                target_batch_index: torch.tensor,
                xs: list,
                mode: str='random',
-               denoise: bool=False) -> Tuple[torch.distributions.Distribution, list, list]:
+               denoise: bool=False,
+               pretrain: bool=False) -> Tuple[torch.distributions.Distribution, list, list]:
         # Based on the zero inflated, we use different likelihood 
         x_mu, x_log_var, x_gate_logit, kl_losses, zs = self.decoder(z=z,
                                                                 batch_index=target_batch_index,
                                                                 batch_embedding=self.batch_embedding,
                                                                 xs=xs,
-                                                                mode=mode) 
+                                                                mode=mode,
+                                                                pretrain=pretrain) 
         if denoise or self.zero_inflated:
             normal_scale = None
         else:
@@ -166,34 +171,55 @@ class cytoone(nn.Module):
     def forward(self,
                 cell_by_gene_counts: torch.tensor,
                 source_batch_index: torch.tensor,
-                target_batch_index: torch.tensor) -> Tuple[torch.distributions.Distribution, list, list]:
+                target_batch_index: torch.tensor,
+                pretrain: bool=False) -> Tuple[torch.distributions.Distribution, list, list]:
         mu, log_var, xs, z = self.encode(cell_by_gene_counts=cell_by_gene_counts,
-                                         source_batch_index=source_batch_index) 
+                                         source_batch_index=source_batch_index,
+                                         pretrain=pretrain) 
         x_dists, kl_losses, zs = self.decode(z=z,
                                              target_batch_index=target_batch_index,
-                                             xs=xs)
+                                             xs=xs,
+                                             pretrain=pretrain)
         # KL divergence top-level 
         kl_losses = [kl_standard(mu=mu, log_var=log_var)] + kl_losses
         # kl_losses.append(kl_standard(mu=mu, log_var=log_var)) 
         return x_dists, kl_losses, zs
 
-    def infer(self):
+    def infer(self,
+              target_batch_index: Optional[int]=None,
+              mode: str='random',
+              denoise: bool=True):
         self.eval()
         with torch.no_grad():
             adata_w_batch = self.adata.to_df().copy()
             adata_w_batch['batch_index'] = self.adata.obs['batch_index'].copy() 
             splits = np.array_split(adata_w_batch.index, 100)
+            x_samples = []
+            z_samples = []
             for i, row_ind in enumerate(splits):
-                cell_by_gene_counts = adata_w_batch.loc[row_ind, :]
-                source_batch_index = adata_w_batch.loc[row_ind, "batch_index"]
-                target_batch_index = source_batch_index
-                mu, log_var, xs, z = self.encode(cell_by_gene_counts=cell_by_gene_counts,
-                                                source_batch_index=source_batch_index) 
-                x_dists, kl_losses, zs = self.decode(z=z,
-                                                    target_batch_index=target_batch_index,
-                                                    xs=xs)
+                source_batch_index = torch.tensor(adata_w_batch.loc[row_ind, "batch_index"].values, 
+                                                  dtype=torch.int64, device=self.model_device)
+                
+                cell_by_gene_counts = torch.tensor(adata_w_batch.loc[row_ind, :].drop(columns=['batch_index']).values,
+                                                   dtype=torch.float32, device=self.model_device)
                 
                 
+                _, _, xs, z = self.encode(cell_by_gene_counts=cell_by_gene_counts,
+                                                source_batch_index=source_batch_index,
+                                                mode=mode) 
+                if target_batch_index is None:
+                    target_batch_index = source_batch_index.clone()
+                else:
+                    target_batch_index = torch.ones_like(source_batch_index) * target_batch_index
+                x_dists, _, _ = self.decode(z=z,
+                                            target_batch_index=target_batch_index,
+                                            xs=xs,
+                                            mode=mode,
+                                            denoise=denoise)
+                x_samples.append(x_dists.sample().detach().cpu().numpy())
+                z_samples.append(z.detach().cpu().numpy())
+            return x_samples, z_samples
+                 
     def loss_function(self,
                       x_dists: torch.distributions.Distribution,
                       cell_by_gene_counts: torch.tensor,
@@ -226,8 +252,12 @@ class cytoone(nn.Module):
     def training_loop(self,
                       n_epoches: int=50,
                       n_strata: int=100,
-                      early_stop_pval: float=0.5):
+                      early_stop_pval: float=0.5,
+                      pretrain: bool=False):
         # total_anneal_steps = np.round(n_epoches * n_strata * self.anneal_percent)
+        if not pretrain:
+            for param in self.encoder.encoder_elevator.parameters():
+                param.requires_grad = False
         self.train()
         for epoch in range(n_epoches):
             # For epoch, we randomly suffule the data and stratify 
@@ -254,7 +284,8 @@ class cytoone(nn.Module):
                                                                                            model_device=self.model_device)
                 x_dists, kl_losses, zs = self(cell_by_gene_counts=cell_by_gene_counts,
                                               source_batch_index=source_batch_index,
-                                              target_batch_index=target_batch_index)
+                                              target_batch_index=target_batch_index,
+                                              pretrain=pretrain)
                 
                 self.optimizer.zero_grad()
                 loss, RECON, KLD, MMD = self.loss_function(x_dists=x_dists,

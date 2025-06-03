@@ -78,6 +78,7 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
         else: 
             raise TypeError("Only .csv file or pandas dataframe is allowed")
         cell_meta.index.rename(name='cell_id', inplace=True)
+        cell_meta.index = cell_meta.index.astype(str)
     
     with process_time_ram("Processing cell-by-gene matrix") as ctm: 
         if isinstance(cell_by_gene, str) and ("csv" in os.path.splitext(cell_by_gene)[1]):
@@ -88,6 +89,7 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
             raise TypeError("Only .csv file or pandas dataframe is allowed")
         
         counts.index.rename(name='cell_id', inplace=True)
+        counts.index = counts.index.astype(str)
 
     with process_time_ram("Creating AnnData object") as ctm:
         adata = sc.AnnData(counts)
