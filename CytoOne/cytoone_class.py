@@ -258,6 +258,8 @@ class cytoone(nn.Module):
         if not pretrain:
             for param in self.encoder.encoder_elevator.parameters():
                 param.requires_grad = False
+            for param in self.decoder.decoder_elevator.parameters():
+                param.requires_grad = False
         self.train()
         for epoch in range(n_epoches):
             # For epoch, we randomly suffule the data and stratify 
