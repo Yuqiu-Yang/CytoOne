@@ -35,8 +35,8 @@ class cytoone(nn.Module):
                  encoder_hidden_dims: list=[[512, 256], [256, 128]],
                  decoder_hidden_dims: list=[[128, 256], [256, 512]],
                  drop_out_p: float=0.2,
-                 gamma: float=1.0,
-                 top_beta: float=0.1,
+                 top_gamma: float=2.0,
+                 top_beta: float=0.01,
                 #  anneal_percent: float=0.0,
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
@@ -85,7 +85,7 @@ class cytoone(nn.Module):
         #     self.beta = 1.0
         # else:
         #     self.beta = 0.0
-        self.gamma = gamma
+        self.gamma = [top_gamma*np.min(latent_dims)/i for i in latent_dims]
         self.log_interval = 10
         # Monitoring loss 
         self.RECON_list = []
@@ -237,13 +237,13 @@ class cytoone(nn.Module):
         # MMD 
         MMD = 0.0
         if self.n_batches > 1:
-            for z in zs:
+            for i, z in enumerate(zs[::-1]):
                 batch_l = mmd_loss(z=z, batch_index=source_batch_index)
-                MMD += batch_l
+                MMD += batch_l * self.gamma[i]
         else:
             MMD = torch.zeros(1, dtype=torch.float32)
 
-        return -log_likelihood + KLD + self.gamma*MMD,\
+        return -log_likelihood + KLD + MMD,\
                 log_likelihood.detach().cpu().numpy().item(),\
                 KLD.detach().cpu().numpy().item(),\
                 MMD.detach().cpu().numpy().item()
