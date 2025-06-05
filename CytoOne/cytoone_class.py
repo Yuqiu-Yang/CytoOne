@@ -37,6 +37,8 @@ class cytoone(nn.Module):
                  drop_out_p: float=0.2,
                  top_gamma: float=2.0,
                  top_beta: float=0.01,
+                 pretrain_gamma: float=1.0,
+                 pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
@@ -79,13 +81,16 @@ class cytoone(nn.Module):
         # Optimization 
         self.optimizer = None 
         # self.anneal_percent=anneal_percent
-        self.beta = [i/np.max(latent_dims) for i in latent_dims]
-        self.beta[-1] = np.minimum(self.beta[-1], top_beta)
+        self.top_beta = top_beta
+        self.pretrain_beta = pretrain_beta
+        self.beta = []
+        self.top_gamma = top_gamma
+        self.pretrain_gamma = pretrain_gamma
+        self.gamma = []
         # if self.anneal_percent <= 0.0:
         #     self.beta = 1.0
         # else:
         #     self.beta = 0.0
-        self.gamma = [top_gamma*np.min(latent_dims)/i for i in latent_dims]
         self.log_interval = 10
         # Monitoring loss 
         self.RECON_list = []
@@ -105,8 +110,7 @@ class cytoone(nn.Module):
         if not self.zero_inflated:
             neg_x = self.adata.X[self.adata.X<=0].copy().reshape(-1)
             self.rough_log_var = np.log(np.var(np.concatenate((neg_x, -neg_x))))
-        
-        
+
     def initialize_parameters(self):
         self.encoder = Encoder(**self.encoder_par)
         self.decoder = Decoder(**self.decoder_par)
@@ -248,7 +252,6 @@ class cytoone(nn.Module):
                 KLD.detach().cpu().numpy().item(),\
                 MMD.detach().cpu().numpy().item()
 
-
     def training_loop(self,
                       n_epoches: int=50,
                       n_strata: int=100,
@@ -260,6 +263,13 @@ class cytoone(nn.Module):
                 param.requires_grad = False
             for param in self.decoder.decoder_elevator.parameters():
                 param.requires_grad = False
+            latent_dims = self.encoder_par['latent_dims']
+            self.beta = [i/np.max(latent_dims) for i in latent_dims]
+            self.beta[-1] = np.minimum(self.beta[-1], self.top_beta)
+            self.gamma = [self.top_gamma*np.min(latent_dims)/i for i in latent_dims]
+        else: 
+            self.gamma = [self.pretrain_gamma]
+            self.beta = [self.pretrain_beta]
         self.train()
         for epoch in range(n_epoches):
             # For epoch, we randomly suffule the data and stratify 
