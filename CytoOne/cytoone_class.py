@@ -192,7 +192,8 @@ class cytoone(nn.Module):
     def infer(self,
               target_batch_index: Optional[int]=None,
               mode: str='random',
-              denoise: bool=True):
+              denoise: bool=True,
+              use_pretrain: bool=False):
         self.eval()
         with torch.no_grad():
             adata_w_batch = self.adata.to_df().copy()
@@ -207,10 +208,10 @@ class cytoone(nn.Module):
                 cell_by_gene_counts = torch.tensor(adata_w_batch.loc[row_ind, :].drop(columns=['batch_index']).values,
                                                    dtype=torch.float32, device=self.model_device)
                 
-                
                 _, _, xs, z = self.encode(cell_by_gene_counts=cell_by_gene_counts,
                                                 source_batch_index=source_batch_index,
-                                                mode=mode) 
+                                                mode=mode,
+                                                pretrain=use_pretrain) 
                 if target_batch_index is None:
                     target_batch_index = source_batch_index.clone()
                 else:
@@ -219,9 +220,18 @@ class cytoone(nn.Module):
                                             target_batch_index=target_batch_index,
                                             xs=xs,
                                             mode=mode,
-                                            denoise=denoise)
+                                            denoise=denoise,
+                                            pretrain=use_pretrain)
                 x_samples.append(x_dists.sample().detach().cpu().numpy())
                 z_samples.append(z.detach().cpu().numpy())
+            
+            x_samples = pd.DataFrame(np.concatenate(x_samples, axis=0))
+            x_samples.columns = self.adata.var_names
+            x_samples.index = self.adata.obs_names
+            x_samples['batch_index'] = self.adata.obs['batch_index'].copy() 
+            z_samples = pd.DataFrame(np.concatenate(z_samples, axis=0),
+                                     columns=["z"+str(i) for i in range(self.encoder_par['latent_dims'][-1])])
+            z_samples.index = self.adata.obs_names
             return x_samples, z_samples
                  
     def loss_function(self,
