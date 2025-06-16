@@ -40,7 +40,7 @@ class cytoone(nn.Module):
                  pretrain_gamma: float=1.0,
                  pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
-                 distribution_type: str="softplus",
+                 distribution_type: str="softplus_normal",
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
         # Parameters for importing data 
@@ -101,7 +101,7 @@ class cytoone(nn.Module):
 
     def import_data(self,
                     cell_by_gene: Union[str, pd.DataFrame],
-                    cell_metadata: Union[str, pd.DataFrame]) -> None:
+                    cell_metadata: Optional[Union[str, pd.DataFrame]]=None) -> None:
         self.adata = import_data(cell_by_gene=cell_by_gene,
                                  cell_metadata=cell_metadata,
                                  **self.import_data_par)
