@@ -37,7 +37,7 @@ def process_time_ram(message: str=""):
 
 
 def import_data(cell_by_gene: Union[str, pd.DataFrame],
-                cell_metadata: Union[str, pd.DataFrame],
+                cell_metadata: Optional[Union[str, pd.DataFrame]]=None,
                 batch_index_col: Optional[str]=None,
                 celltype_col: Optional[str]=None,
                 normalize: bool=True,
@@ -70,16 +70,6 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
         An AnnData object containing curated information 
 
     """
-    with process_time_ram("Processing cell metadata") as ctm: 
-        if isinstance(cell_metadata, str) and ("csv" in os.path.splitext(cell_metadata)[1]):
-            cell_meta = pd.read_csv(cell_metadata, index_col=0)
-        elif isinstance(cell_metadata, pd.DataFrame):
-            cell_meta = cell_metadata.copy()
-        else: 
-            raise TypeError("Only .csv file or pandas dataframe is allowed")
-        cell_meta.index.rename(name='cell_id', inplace=True)
-        cell_meta.index = cell_meta.index.astype(str)
-    
     with process_time_ram("Processing cell-by-gene matrix") as ctm: 
         if isinstance(cell_by_gene, str) and ("csv" in os.path.splitext(cell_by_gene)[1]):
             counts = pd.read_csv(cell_by_gene, index_col=0)
@@ -90,7 +80,23 @@ def import_data(cell_by_gene: Union[str, pd.DataFrame],
         
         counts.index.rename(name='cell_id', inplace=True)
         counts.index = counts.index.astype(str)
+    
+    with process_time_ram("Processing cell metadata") as ctm: 
+        if cell_metadata is not None:
+            if isinstance(cell_metadata, str) and ("csv" in os.path.splitext(cell_metadata)[1]):
+                cell_meta = pd.read_csv(cell_metadata, index_col=0)
+            elif isinstance(cell_metadata, pd.DataFrame):
+                cell_meta = cell_metadata.copy()
+            else: 
+                raise TypeError("Only .csv file or pandas dataframe is allowed")
+        else:
+            batch_index_col = None
+            cell_meta = pd.DataFrame({"batch": "0"}, index=counts.index)
+        
+        cell_meta.index.rename(name='cell_id', inplace=True)
+        cell_meta.index = cell_meta.index.astype(str)
 
+    
     with process_time_ram("Creating AnnData object") as ctm:
         adata = sc.AnnData(counts)
         # Add cell type information 
