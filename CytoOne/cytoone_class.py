@@ -274,7 +274,7 @@ class cytoone(nn.Module):
                 KLD.detach().cpu().numpy().item(),\
                 MMD.detach().cpu().numpy().item()
 
-    def training_loop(self,
+    def _training_loop(self,
                       n_epoches: int=50,
                       n_strata: int=100,
                       early_stop_pval: float=0.5,
@@ -349,6 +349,20 @@ class cytoone(nn.Module):
             self.KLD_list.append(np.array(KLD_epoch_list))
             self.MMD_list.append(np.array(MMD_epoch_list))
     
+    def training_loop(self,
+                      n_epoches: int=50,
+                      n_strata: int=100,
+                      early_stop_pval: float=0.5):
+        self._training_loop(n_epoches=n_epoches,
+                            n_strata=n_strata,
+                            early_stop_pval=early_stop_pval,
+                            pretrain=True)
+        self._training_loop(n_epoches=n_epoches,
+                            n_strata=n_strata,
+                            early_stop_pval=early_stop_pval,
+                            pretrain=False)
+        
+
     def save_model(self,
                    dir_name: str,
                    model_name: str):
