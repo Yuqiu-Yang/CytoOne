@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn 
 import torch.nn.functional as F
 from torch import optim
-from torch.distributions import Independent
+from torch.distributions import Independent, Normal
 # Modules 
 from CytoOne.encoder import Encoder
 from CytoOne.decoder import Decoder
@@ -40,7 +40,7 @@ class cytoone(nn.Module):
                  pretrain_gamma: float=1.0,
                  pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
-                 log_normal: bool=False, 
+                 distribution_type: str="softplus",
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
         # Parameters for importing data 
@@ -65,7 +65,7 @@ class cytoone(nn.Module):
         self.adata = None
         self.n_batches = None
         self.zero_inflated = zero_inflated
-        self.log_normal = log_normal
+        self.distribution_type = distribution_type
         # Set model device
         if model_device is None:
             self.model_device = torch.device(
@@ -162,22 +162,25 @@ class cytoone(nn.Module):
                                                                 xs=xs,
                                                                 mode=mode,
                                                                 pretrain=pretrain) 
-        if denoise or self.zero_inflated:
+        if denoise or self.zero_inflated or (self.distribution_type=='normal'):
             normal_scale = None
         else:
             normal_scale = torch.exp(0.5*self.noise_log_normal_var)
         
-        if self.log_normal:
-            x_dists = Independent(QuasiZeroInflatedLogNormal(loc=x_mu,
-                                                scale=torch.exp(0.5*x_log_var),
+        x_scale = torch.exp(0.5*x_log_var)
+        if self.distribution_type == "softplus_normal":
+            x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
+                                                scale=x_scale,
                                                 gate_logits=x_gate_logit,
                                                 normal_scale=normal_scale), 0)
 
-        else:
-            x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
-                                                scale=torch.exp(0.5*x_log_var),
+        elif self.distribution_type == "log_normal":
+            x_dists = Independent(QuasiZeroInflatedLogNormal(loc=x_mu,
+                                                scale=x_scale,
                                                 gate_logits=x_gate_logit,
                                                 normal_scale=normal_scale), 0)
+        else:
+            x_dists = Independent(Normal(loc=x_mu, scale=x_scale), 0)
 
         return x_dists, kl_losses, zs
 
