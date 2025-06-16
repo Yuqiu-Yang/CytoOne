@@ -17,7 +17,7 @@ from CytoOne.decoder import Decoder
 from CytoOne.utilities import import_data, generate_strata,\
                              load_stratum, reparameterize, \
                              kl_standard, mmd_loss, JSONEncoder
-from CytoOne.basic_distributions import QuasiZeroInflatedSoftplusNormal
+from CytoOne.basic_distributions import QuasiZeroInflatedSoftplusNormal, QuasiZeroInflatedLogNormal
 # User entertainment
 from tqdm.auto import tqdm 
 from typing import Optional, Union, Tuple
@@ -40,6 +40,7 @@ class cytoone(nn.Module):
                  pretrain_gamma: float=1.0,
                  pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
+                 log_normal: bool=False, 
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
         super().__init__()
         # Parameters for importing data 
@@ -64,6 +65,7 @@ class cytoone(nn.Module):
         self.adata = None
         self.n_batches = None
         self.zero_inflated = zero_inflated
+        self.log_normal = log_normal
         # Set model device
         if model_device is None:
             self.model_device = torch.device(
@@ -164,11 +166,18 @@ class cytoone(nn.Module):
             normal_scale = None
         else:
             normal_scale = torch.exp(0.5*self.noise_log_normal_var)
-            
-        x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
-                                            scale=torch.exp(0.5*x_log_var),
-                                            gate_logits=x_gate_logit,
-                                            normal_scale=normal_scale), 0)
+        
+        if self.log_normal:
+            x_dists = Independent(QuasiZeroInflatedLogNormal(loc=x_mu,
+                                                scale=torch.exp(0.5*x_log_var),
+                                                gate_logits=x_gate_logit,
+                                                normal_scale=normal_scale), 0)
+
+        else:
+            x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
+                                                scale=torch.exp(0.5*x_log_var),
+                                                gate_logits=x_gate_logit,
+                                                normal_scale=normal_scale), 0)
 
         return x_dists, kl_losses, zs
 

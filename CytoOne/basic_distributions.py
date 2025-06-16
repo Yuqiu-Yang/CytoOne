@@ -15,7 +15,7 @@ from torch.distributions.utils import (
 from torch.nn.functional import softplus
 from torch.distributions.normal import Normal
 from torch.distributions.transformed_distribution import TransformedDistribution
-from torch.distributions.transforms import SoftplusTransform
+from torch.distributions.transforms import SoftplusTransform, ExpTransform
 # Pyro 
 from pyro.distributions import TorchDistribution
 from pyro.distributions.util import broadcast_shape
@@ -34,6 +34,20 @@ class SoftplusNormal(TransformedDistribution):
         new = self._get_checked_instance(SoftplusNormal, _instance)
         return super().expand(batch_shape, _instance=new)
 
+
+class LogNormal(TransformedDistribution):
+    arg_constraints = {"loc": constraints.real, "scale": constraints.positive}
+    support = constraints.positive
+    has_rsample = True
+
+    def __init__(self, loc, scale, validate_args=None):
+        base_dist = Normal(loc, scale, validate_args=validate_args)
+        super().__init__(base_dist, ExpTransform(), validate_args=validate_args)
+
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(LogNormal, _instance)
+        return super().expand(batch_shape, _instance=new)
+    
 
 class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
 
@@ -180,6 +194,7 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
         new._validate_args = self._validate_args
         return new
 
+
 class QuasiZeroInflatedSoftplusNormal(QuasiZeroInflatedPositiveDistribution):
     arg_constraints = {
         "gate": constraints.unit_interval,
@@ -193,6 +208,28 @@ class QuasiZeroInflatedSoftplusNormal(QuasiZeroInflatedPositiveDistribution):
                  normal_scale=None, quadrature_degree=20,
                  validate_args=None):
         base_dist = SoftplusNormal(loc=loc, 
+                          scale=scale, validate_args=False)
+        base_dist._validate_args = validate_args
+        super().__init__(
+            base_dist, gate=gate, gate_logits=gate_logits,
+            normal_scale=normal_scale, quadrature_degree=quadrature_degree,
+            validate_args=validate_args
+        )
+
+
+class QuasiZeroInflatedLogNormal(QuasiZeroInflatedPositiveDistribution):
+    arg_constraints = {
+        "gate": constraints.unit_interval,
+        "gate_logits": constraints.real,
+        "normal_scale": constraints.greater_than_eq(0),
+    }
+    support = constraints.real
+
+    def __init__(self, loc, scale, *, 
+                 gate=None, gate_logits=None, 
+                 normal_scale=None, quadrature_degree=20,
+                 validate_args=None):
+        base_dist = LogNormal(loc=loc, 
                           scale=scale, validate_args=False)
         base_dist._validate_args = validate_args
         super().__init__(
