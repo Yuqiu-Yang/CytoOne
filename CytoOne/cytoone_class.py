@@ -225,11 +225,11 @@ class cytoone(nn.Module):
                                                 mode=mode,
                                                 pretrain=use_pretrain) 
                 if target_batch_index is None:
-                    target_batch_index = source_batch_index.clone()
+                    t_ind = source_batch_index.clone()
                 else:
-                    target_batch_index = torch.ones_like(source_batch_index) * target_batch_index
+                    t_ind = torch.ones_like(source_batch_index) * target_batch_index
                 x_dists, _, _ = self.decode(z=z,
-                                            target_batch_index=target_batch_index,
+                                            target_batch_index=t_ind,
                                             xs=xs,
                                             mode=mode,
                                             denoise=denoise,
