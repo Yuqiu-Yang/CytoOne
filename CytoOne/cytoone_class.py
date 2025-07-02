@@ -202,14 +202,23 @@ class cytoone(nn.Module):
         return x_dists, kl_losses, zs
 
     def infer(self,
+              new_cell_by_gene: Optional[Union[str, pd.DataFrame]]=None,
+              new_cell_metadata: Optional[Union[str, pd.DataFrame]]=None,
               target_batch_index: Optional[int]=None,
               mode: str='random',
               denoise: bool=True,
               use_pretrain: bool=False):
         self.eval()
         with torch.no_grad():
-            adata_w_batch = self.adata.to_df().copy()
-            adata_w_batch['batch_index'] = self.adata.obs['batch_index'].copy() 
+            if new_cell_by_gene is None:
+                adata_w_batch = self.adata.to_df().copy()
+                adata_w_batch['batch_index'] = self.adata.obs['batch_index'].copy() 
+            else: 
+                new_adata = import_data(cell_by_gene=new_cell_by_gene,
+                                        cell_metadata=new_cell_metadata,
+                                        **self.import_data_par)
+                adata_w_batch = new_adata.to_df().copy()
+                adata_w_batch['batch_index'] = new_adata.obs['batch_index'].copy() 
             splits = np.array_split(adata_w_batch.index, 100)
             x_samples = []
             z_samples = []
@@ -239,8 +248,11 @@ class cytoone(nn.Module):
             
             x_samples = pd.DataFrame(np.concatenate(x_samples, axis=0))
             x_samples.columns = self.adata.var_names
-            x_samples.index = self.adata.obs_names
-            x_samples['batch_index'] = self.adata.obs['batch_index'].copy() 
+            x_samples.index = adata_w_batch.index
+            if target_batch_index is None:
+                x_samples['batch_index'] = adata_w_batch['batch_index'].copy() 
+            else:
+                x_samples['batch_index'] = target_batch_index
             z_samples = pd.DataFrame(np.concatenate(z_samples, axis=0),
                                      columns=["z"+str(i) for i in range(self.encoder_par['latent_dims'][-1])])
             z_samples.index = self.adata.obs_names
