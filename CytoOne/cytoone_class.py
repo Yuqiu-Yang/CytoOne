@@ -30,10 +30,10 @@ class cytoone(nn.Module):
                  normalize: bool=True,
                  dr: bool=True, 
                  zero_inflated: bool=True,
-                 latent_dims: list=[10, 2],
+                 latent_dims: list=[20, 10, 5, 2],
                  batch_embedding_dim: int=2, 
-                 encoder_hidden_dims: list=[[512, 256], [256, 128]],
-                 decoder_hidden_dims: list=[[128, 256], [256, 512]],
+                 encoder_hidden_dims: list=[[1024, 512, 256], [512, 256, 128], [256, 128, 64], [128, 64,32]],
+                 decoder_hidden_dims: list=[[32, 64,128], [64, 128, 256], [128, 256, 512], [256, 512, 1024]],
                  drop_out_p: float=0.2,
                  top_gamma: float=2.0,
                  top_beta: float=0.01,
@@ -179,8 +179,10 @@ class cytoone(nn.Module):
                                                 scale=x_scale,
                                                 gate_logits=x_gate_logit,
                                                 normal_scale=normal_scale), 0)
-        else:
+        elif self.distribution_type == "normal":
             x_dists = Independent(Normal(loc=x_mu, scale=x_scale), 0)
+        else: 
+            raise TypeError("Unknown distribution type")
 
         return x_dists, kl_losses, zs
 
@@ -207,7 +209,8 @@ class cytoone(nn.Module):
               target_batch_index: Optional[int]=None,
               mode: str='random',
               denoise: bool=True,
-              use_pretrain: bool=False):
+              use_pretrain: bool=False,
+              get_normal_component: bool=False):
         self.eval()
         with torch.no_grad():
             if new_cell_by_gene is None:
@@ -243,12 +246,17 @@ class cytoone(nn.Module):
                                             mode=mode,
                                             denoise=denoise,
                                             pretrain=use_pretrain)
-                x_samples.append(x_dists.sample().detach().cpu().numpy())
+
+                if get_normal_component and ("Quasi" in str(type(x_dists.base_dist))):
+                    x_samples.append(x_dists.base_dist.base_dist.base_dist.sample().detach().cpu().numpy()) 
+                else:
+                    x_samples.append(x_dists.sample().detach().cpu().numpy())
                 z_samples.append(z.detach().cpu().numpy())
             
             x_samples = pd.DataFrame(np.concatenate(x_samples, axis=0))
             x_samples.columns = self.adata.var_names
             x_samples.index = adata_w_batch.index
+            x_samples['source_batch_index'] = adata_w_batch['batch_index'].copy() 
             if target_batch_index is None:
                 x_samples['batch_index'] = adata_w_batch['batch_index'].copy() 
             else:
