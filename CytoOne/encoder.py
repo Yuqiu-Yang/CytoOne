@@ -1,16 +1,34 @@
+# PyTorch
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F
+# Utility
 from CytoOne.utilities import ResidualBlock
-
+# Typing 
+from typing import Tuple
 
 class Encoder(nn.Module):
     def __init__(self,
                  input_dim: int,
-                 batch_embedding_dim: int=2, 
-                 latent_dims: list=[10, 2],
-                 hidden_dims: list=[[512, 256], [256, 128]],
-                 drop_out_p: float=0.2) -> None:
+                 batch_embedding_dim: int, 
+                 latent_dims: list,
+                 hidden_dims: list,
+                 drop_out_p: float) -> None:
+        """Initialize encoder
+
+        Parameters
+        ----------
+        input_dim : int
+            Dimension of the input 
+        batch_embedding_dim : int
+            Dimension of batch embedding 
+        latent_dims : list
+            A list of dimensions of latent variables 
+        hidden_dims : list
+            A nested list where each sublist contains the number of hidden units 
+        drop_out_p : float
+            Probability of drop out 
+        """
         super().__init__()
 
         # The encoder module takes x and batch embedding 
@@ -29,7 +47,7 @@ class Encoder(nn.Module):
             nn.GELU(),
             nn.Linear(current_d, 2*current_d)
         )
-
+        # This module directly mapps from X to top-level z
         self.encoder_elevator = nn.Sequential(
             nn.Linear(input_dim+batch_embedding_dim, 512),
             nn.LayerNorm(512),
@@ -43,10 +61,29 @@ class Encoder(nn.Module):
             nn.Linear(128, 2*current_d)
         )
 
-    def forward(self, x, 
-                batch_index, 
-                batch_embedding,
-                pretrain):
+    def forward(self, 
+                x: torch.tensor, 
+                batch_index: torch.tensor, 
+                batch_embedding: torch.tensor, 
+                pretrain: bool) -> Tuple[torch.tensor, torch.tensor, list]:
+        """Forward for encoder
+
+        Parameters
+        ----------
+        x : torch.tensor
+            Input 
+        batch_index : torch.tensor
+            Batch index 
+        batch_embedding : torch.tensor
+            All batch embeddings 
+        pretrain : bool
+            If use pretrain model 
+
+        Returns
+        -------
+        Tuple[torch.tensor, torch.tensor, list]
+            Top level mu, log_var, and all other embeddings 
+        """
         batch_emb = batch_embedding(batch_index)
         x = torch.cat([x, batch_emb], dim=1)
         direct_mu, direct_log_var = self.encoder_elevator(x).chunk(2, dim=1)

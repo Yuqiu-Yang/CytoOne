@@ -1,17 +1,35 @@
+# PyTorch
 import torch 
 import torch.nn as nn 
 import torch.nn.functional as F
-
+# Utility
 from CytoOne.utilities import ResidualBlock, reparameterize, kl_delta
+# Typing 
+from typing import Tuple, Optional
 
 
 class Decoder(nn.Module):
     def __init__(self, 
                  input_dim: int,
-                 batch_embedding_dim: int=2, 
-                 latent_dims: list=[2, 10],
-                 hidden_dims: list=[[128, 256], [256, 512]],
-                 drop_out_p: float=0.2):
+                 batch_embedding_dim: int, 
+                 latent_dims: list,
+                 hidden_dims: list,
+                 drop_out_p: float) -> None:
+        """Initialize decoder
+
+        Parameters
+        ----------
+        input_dim : int
+            Dimension of the input 
+        batch_embedding_dim : int
+            Dimension of batch embedding 
+        latent_dims : list
+            A list of dimensions of latent variables 
+        hidden_dims : list
+            A nested list where each sublist contains the number of hidden units 
+        drop_out_p : float
+            Drop out probability
+        """
         super().__init__()
 
         self.decoder_tower = nn.ModuleList()
@@ -51,7 +69,7 @@ class Decoder(nn.Module):
                             drop_out_p=drop_out_p),
             nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
         )
-        
+        # Only used for pretrain model 
         self.decoder_elevator = nn.Sequential(
             nn.Linear(latent_dims[0]+batch_embedding_dim, 128),
             nn.LayerNorm(128),
@@ -65,13 +83,35 @@ class Decoder(nn.Module):
             nn.Linear(512, 3*input_dim)
         )
 
-    def forward(self, z, 
-                batch_index, 
-                batch_embedding,
-                xs=None, 
-                mode="random",
-                pretrain=False):
+    def forward(self, 
+                z: torch.tensor, 
+                batch_index: torch.tensor, 
+                batch_embedding: torch.tensor,
+                xs: Optional[list]=None, 
+                mode: str="random",
+                pretrain: bool=False) -> Tuple[torch.tensor, torch.tensor, torch.tensor, list, list]:
+        """Forward for decoder 
 
+        Parameters
+        ----------
+        z : torch.tensor
+            Top level embedding 
+        batch_index : torch.tensor
+            Batch index 
+        batch_embedding : torch.tensor
+            All batch embeddings 
+        xs : Optional[list], optional
+            All letent embeddings, by default None
+        mode : str, optional
+            Whether to use random sampling, by default "random"
+        pretrain : bool, optional
+            Whether to use pretrain model, by default False
+
+        Returns
+        -------
+        Tuple[torch.tensor, torch.tensor, torch.tensor, list, list]
+            Mu, log-var, zero-inflation gate for reconstructed x. KL losses and all latent embeddings
+        """
         b, w = z.shape
         batch_emb = batch_embedding(batch_index)
         zs = [z]

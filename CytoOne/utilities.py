@@ -232,18 +232,18 @@ class ResidualBlock(nn.Module):
                  out_dim: int, 
                  hidden_dims: list,
                  drop_out_p: float) -> None:
-        """_summary_
+        """Residual block used in encoder and decoder
 
         Parameters
         ----------
         in_dim : int
-            _description_
+            Dimension of the input 
         out_dim : int
-            _description_
+            Dimension of the output 
         hidden_dims : list
-            _description_
+            A nested list describing the number of hidden units 
         drop_out_p : float
-            _description_
+            Probability of drop out 
         """
         super().__init__()
 

@@ -42,6 +42,43 @@ class cytoone(nn.Module):
                 #  anneal_percent: float=0.0,
                  distribution_type: str="softplus_normal",
                  model_device: Optional[Union[str, torch.device]] = None) -> None:
+        """Initialize cytoone object 
+
+        Parameters
+        ----------
+        batch_index_col : Optional[str], optional
+            The column containing batch information, by default None
+        celltype_col : Optional[str], optional
+            The column containing cell type information, by default None
+        normalize : bool, optional
+            If normalize the data via asinh, by default True
+        dr : bool, optional
+            If UMAP should be computed, by default True
+        zero_inflated : bool, optional
+            If the data if zero-inflated, by default True
+        latent_dims : list, optional
+            In a bottom-up fashion, the dimensions of latent variables, by default [20, 10, 5, 2]
+        batch_embedding_dim : int, optional
+            Dimension of batch embeddings, by default 2
+        encoder_hidden_dims : list, optional
+            A nested list where each sublist contains the number of hidden units for the encoder, by default [[1024, 512, 256], [512, 256, 128], [256, 128, 64], [128, 64,32]]
+        decoder_hidden_dims : list, optional
+            A nested list where each sublist contains the number of hidden units for the decoder, by default [[32, 64,128], [64, 128, 256], [128, 256, 512], [256, 512, 1024]]
+        drop_out_p : float, optional
+            Drop out probability, by default 0.2
+        top_gamma : float, optional
+            Top level penalty for MMD, by default 2.0
+        top_beta : float, optional
+            Top level penalty for KL divergence, by default 0.01
+        pretrain_gamma : float, optional
+            Top level penalty for MMD during pretrain, by default 1.0
+        pretrain_beta : float, optional
+            Top level penalty for KL divergence during pretrain, by default 1.0
+        distribution_type : str, optional
+            Likelihood to use, by default "softplus_normal"
+        model_device : Optional[Union[str, torch.device]], optional
+            Model device, by default None
+        """
         super().__init__()
         # Parameters for importing data 
         self.import_data_par = {"batch_index_col": batch_index_col,
@@ -102,6 +139,15 @@ class cytoone(nn.Module):
     def import_data(self,
                     cell_by_gene: Union[str, pd.DataFrame],
                     cell_metadata: Optional[Union[str, pd.DataFrame]]=None) -> None:
+        """Import data 
+
+        Parameters
+        ----------
+        cell_by_gene : Union[str, pd.DataFrame]
+            Either the path to the csv file or pd.DataFrame that contains the CyTOF measurements 
+        cell_metadata : Optional[Union[str, pd.DataFrame]], optional
+            Either the path to the csv file or pd.DataFrame that contains metainformation of the CyTOF measurements , by default None
+        """
         self.adata = import_data(cell_by_gene=cell_by_gene,
                                  cell_metadata=cell_metadata,
                                  **self.import_data_par)
@@ -114,6 +160,8 @@ class cytoone(nn.Module):
             self.rough_log_var = np.log(np.var(np.concatenate((neg_x, -neg_x))))
 
     def initialize_parameters(self):
+        """Initialize parameters
+        """
         self.encoder = Encoder(**self.encoder_par)
         self.decoder = Decoder(**self.decoder_par)
 
@@ -135,6 +183,24 @@ class cytoone(nn.Module):
                source_batch_index: torch.tensor,
                mode: str="random",
                pretrain: bool=False) -> Tuple[torch.tensor, torch.tensor, list, torch.tensor]:
+        """Encode the observed measurement 
+
+        Parameters
+        ----------
+        cell_by_gene_counts : torch.tensor
+            The CyTOF measurement
+        source_batch_index : torch.tensor
+            The associated batch information 
+        mode : str, optional
+            If sampling is enabled, by default "random"
+        pretrain : bool, optional
+            Use the pretain model , by default False
+
+        Returns
+        -------
+        Tuple[torch.tensor, torch.tensor, list, torch.tensor]
+            Location and log-var of the top-level latent. A list of intermediate latent. Top-level z 
+        """
         # Encoder will generate the mu and log_var of the top-level z
         # xs is a list of output of residule blocks
         mu, log_var, xs = self.encoder(x=cell_by_gene_counts,
@@ -155,6 +221,29 @@ class cytoone(nn.Module):
                mode: str='random',
                denoise: bool=False,
                pretrain: bool=False) -> Tuple[torch.distributions.Distribution, list, list]:
+        """Decode the latent variables 
+
+        Parameters
+        ----------
+        z : torch.tensor
+            Top-level latent variable 
+        target_batch_index : torch.tensor
+            Batch to which batch correction is targeted 
+        xs : list
+            A list of intermediate latent 
+        mode : str, optional
+            If sampling is enabled , by default 'random'
+        denoise : bool, optional
+            If the output should be zero-inflated, by default False
+        pretrain : bool, optional
+            Whether to use pretrain model, by default False
+
+        Returns
+        -------
+        Tuple[torch.distributions.Distribution, list, list]
+            Distribution of the measuement. KL losses and intermediate latent variables 
+
+        """
         # Based on the zero inflated, we use different likelihood 
         x_mu, x_log_var, x_gate_logit, kl_losses, zs = self.decoder(z=z,
                                                                 batch_index=target_batch_index,
@@ -191,6 +280,24 @@ class cytoone(nn.Module):
                 source_batch_index: torch.tensor,
                 target_batch_index: torch.tensor,
                 pretrain: bool=False) -> Tuple[torch.distributions.Distribution, list, list]:
+        """The forward pass 
+
+        Parameters
+        ----------
+        cell_by_gene_counts : torch.tensor
+            The CyTOF measurements 
+        source_batch_index : torch.tensor
+            The associated batch information 
+        target_batch_index : torch.tensor
+            The batch to which batch correction is targetd 
+        pretrain : bool, optional
+            Whether to use pretrain model, by default False
+
+        Returns
+        -------
+        Tuple[torch.distributions.Distribution, list, list]
+            Distribution of the measuement. KL losses and intermediate latent variables 
+        """
         mu, log_var, xs, z = self.encode(cell_by_gene_counts=cell_by_gene_counts,
                                          source_batch_index=source_batch_index,
                                          pretrain=pretrain) 
@@ -208,9 +315,33 @@ class cytoone(nn.Module):
               new_cell_metadata: Optional[Union[str, pd.DataFrame]]=None,
               target_batch_index: Optional[int]=None,
               mode: str='random',
-              denoise: bool=True,
+              denoise: bool=False,
               use_pretrain: bool=False,
-              get_normal_component: bool=False):
+              get_normal_component: bool=False) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Perform downstream analysis 
+
+        Parameters
+        ----------
+        new_cell_by_gene : Optional[Union[str, pd.DataFrame]], optional
+            New CyTOF measurements, by default None
+        new_cell_metadata : Optional[Union[str, pd.DataFrame]], optional
+            New associated meta information, by default None
+        target_batch_index : Optional[int], optional
+            Batch to which batch correction is targeted, by default None
+        mode : str, optional
+            If sampling is enabled, by default 'random'
+        denoise : bool, optional
+            Whether zero-inflated measurement should be generated, by default False
+        use_pretrain : bool, optional
+            Whether to use pretrain model, by default False
+        get_normal_component : bool, optional
+            Whether to get the normal component, by default False
+
+        Returns
+        -------
+        Tuple[pd.DataFrame, pd.DataFrame]
+            Generated CyTOF measurement, Top-level latent variables 
+        """
         self.eval()
         with torch.no_grad():
             if new_cell_by_gene is None:
@@ -271,8 +402,27 @@ class cytoone(nn.Module):
                       cell_by_gene_counts: torch.tensor,
                       kl_losses: list,
                       zs: list,
-                      source_batch_index: torch.tensor):
-        
+                      source_batch_index: torch.tensor) -> Tuple[torch.tensor, float, float, float]:
+        """Compute the loss 
+
+        Parameters
+        ----------
+        x_dists : torch.distributions.Distribution
+            Distribution of the measuement
+        cell_by_gene_counts : torch.tensor
+            The CyTOF measurements 
+        kl_losses : list
+            KL losses
+        zs : list
+            Intermediate latent variables 
+        source_batch_index : torch.tensor
+            The associated batch information 
+
+        Returns
+        -------
+        Tuple[torch.tensor, float, float, float]
+            -ELBO, log likelihood, KLD, MMD 
+        """
         # Likelihood 
         log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
 
@@ -295,16 +445,31 @@ class cytoone(nn.Module):
                 MMD.detach().cpu().numpy().item()
 
     def _training_loop(self,
-                      n_epoches: int=50,
-                      n_strata: int=100,
-                      early_stop_pval: float=0.5,
-                      pretrain: bool=False):
+                      n_epoches: int,
+                      n_strata: int,
+                      early_stop_pval: float,
+                      pretrain: bool) -> None:
+        """Model training loop 
+
+        Parameters
+        ----------
+        n_epoches : int, optional
+            Number of epoches
+        n_strata : int, optional
+            Number of minibatches per epoch
+        early_stop_pval : float, optional
+            p-value used to detect early stopping
+        pretrain : bool, optional
+            Whether or not the training is pretraining
+        """
         # total_anneal_steps = np.round(n_epoches * n_strata * self.anneal_percent)
         if not pretrain:
+            # If not pretraining, we freeze pretrain models 
             for param in self.encoder.encoder_elevator.parameters():
                 param.requires_grad = False
             for param in self.decoder.decoder_elevator.parameters():
                 param.requires_grad = False
+            # Compute penalties for KLD and MMD 
             latent_dims = self.encoder_par['latent_dims']
             self.beta = [i/np.max(latent_dims) for i in latent_dims]
             self.beta[-1] = np.minimum(self.beta[-1], self.top_beta)
@@ -372,7 +537,18 @@ class cytoone(nn.Module):
     def training_loop(self,
                       n_epoches: int=50,
                       n_strata: int=100,
-                      early_stop_pval: float=0.5):
+                      early_stop_pval: float=1.0) -> None:
+        """Model training loop
+
+        Parameters
+        ----------
+        n_epoches : int, optional
+            Number of epoches, by default 50
+        n_strata : int, optional
+            Number of minibatches per epoch, by default 100
+        early_stop_pval : float, optional
+            p-value used to detect early stopping, by default 1.0
+        """
         self._training_loop(n_epoches=n_epoches,
                             n_strata=n_strata,
                             early_stop_pval=early_stop_pval,
@@ -382,10 +558,18 @@ class cytoone(nn.Module):
                             early_stop_pval=early_stop_pval,
                             pretrain=False)
         
-
     def save_model(self,
                    dir_name: str,
-                   model_name: str):
+                   model_name: str="cytoone") -> None:
+        """Save model results
+
+        Parameters
+        ----------
+        dir_name : str
+            The directory path at which the saved model should be.
+        model_name : str
+            The model name, by default cytoone
+        """
         torch.save({'model_state_dict': self.state_dict()} | \
                 {'optimizer_state_dict': self.optimizer.state_dict()}, 
                 os.path.join(dir_name, model_name+".pt")) 
@@ -401,7 +585,16 @@ class cytoone(nn.Module):
         
     def load_model(self,
                    dir_name: str,
-                   model_name: str):
+                   model_name: str) -> None:
+        """Load model results 
+
+        Parameters
+        ----------
+        dir_name : str
+            The directory path at which the saved model should be.
+        model_name : str
+            The model name
+        """
         model_meta = json.load(open(os.path.join(dir_name, model_name+"_meta.json")))
         self.import_data_par = model_meta['import_data_par']
         self.encoder_par = model_meta['encoder_par']
