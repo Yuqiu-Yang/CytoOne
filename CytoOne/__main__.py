@@ -31,7 +31,9 @@ import sys
 import torch
 import argparse
 
-from CytoOne import __version__, __author__
+from CytoOne.__version__ import __version__, __author__
+from CytoOne.cytoone_class import cytoone
+
 
 parser = argparse.ArgumentParser(description="CytoOne")
 
@@ -39,3 +41,5 @@ parser.add_argument("--version", action="version",
                     version=__version__, help="Display the version of the software")
 parser.add_argument("--author", action="version", version=__author__,
                     help="Check the author list of the algorithm")
+
+

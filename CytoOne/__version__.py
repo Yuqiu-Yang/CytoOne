@@ -1,0 +1,5 @@
+__title__ = "CytoOne"
+__description__ = "A unified probabilistic framework for CyTOF data"
+__version__ = "0.0.1"
+__author__ = "Yuqiu Yang; Kaiwen Wang; Xinlei Wang"
+__authoremail__ = "yuqiu.yang@utsouthwestern.edu; @.edu; @.edu"

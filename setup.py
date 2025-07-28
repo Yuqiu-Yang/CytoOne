@@ -1,92 +1,76 @@
 from setuptools import setup 
-import sys 
+import re 
 import os 
-import shutil
-import distutils.cmd
 
 
-VERSION = "0.0.1"
+VERSIONFILE="CytoOne/__version__.py"
+verstrline = open(VERSIONFILE, "rt").read()
+# Version 
+VSRE = r"^__version__ = ['\"]([^'\"]*)['\"]"
+mo = re.search(VSRE, verstrline, re.M)
+if mo:
+    VERSION = mo.group(1)
+else:
+    raise RuntimeError("Unable to find version string in %s." % (VERSIONFILE,))
+# Authors
+AURE = r"^__author__ = ['\"]([^'\"]*)['\"]"
+mo = re.search(AURE, verstrline, re.M)
+if mo:
+    AUTHORS = mo.group(1)
+else:
+    raise RuntimeError("Unable to find author string in %s." % (VERSIONFILE,))
+# Description
+DESRE = r"^__description__ = ['\"]([^'\"]*)['\"]"
+mo = re.search(DESRE, verstrline, re.M)
+if mo:
+    DESCRIPTION = mo.group(1)
+else:
+    raise RuntimeError("Unable to find description string in %s." % (VERSIONFILE,))
+# Title 
+TITRE = r"^__title__ = ['\"]([^'\"]*)['\"]"
+mo = re.search(TITRE, verstrline, re.M)
+if mo:
+    TITLE = mo.group(1)
+else:
+    raise RuntimeError("Unable to find title string in %s." % (VERSIONFILE,))
 
-class PypiCommand(distutils.cmd.Command):
-    
-    description = "Build and upload for PyPI."
-    user_options = []
-    
-    def initialize_options(self):
-        pass
-    
-    
-    def finalize_options(self):
-        pass
-    
-    
-    def run(self):
-        try:
-            shutil.rmtree("dist/")
-        except FileNotFoundError:
-            pass
-        
-        wheel_file = "CytoOne-{}-py3-none-any.whl".format(VERSION)
-        tar_file = "CytoOne-{}.tar.gz".format(VERSION)
-        
-        os.system("{} setup.py sdist bdist_wheel".format(sys.executable))
-        os.system("twine upload dist/{} dist/{}".format(wheel_file, tar_file))
-    
-    
-# class CondaCommand(distutils.cmd.Command):
-    
-#     description = "Build and upload for conda."
-#     user_options = []
-    
-#     def initialize_options(self):
-#         pass
-    
-    
-#     def finalize_options(self):
-#         pass
-    
-    
-#     def run(self):
-#         try:
-#             shutil.rmtree("dist_conda/")
-#         except FileNotFoundError:
-#             pass
-#         os.system("conda build . --output-folder dist_conda/")
-#         os.system("anaconda upload ./dist_conda/noarch/pMTnet_Omni-{}-py_0.tar.bz2".format(VERSION))
+# Title 
+AUEMRE = r"^__authoremail__ = ['\"]([^'\"]*)['\"]"
+mo = re.search(AUEMRE, verstrline, re.M)
+if mo:
+    AUTHOREMAIL = mo.group(1)
+else:
+    raise RuntimeError("Unable to find author email string in %s." % (VERSIONFILE,))
+
+
+lib_folder = os.path.dirname(os.path.realpath(__file__))
+requirement_path = f"{lib_folder}/requirements.txt"
+install_requires = [] 
+if os.path.isfile(requirement_path):
+    with open(requirement_path) as f:
+        install_requires = f.read().splitlines()
 
 
 setup(
-    name="CytoOne",
+    name=TITLE,
     version=VERSION,
-    description="A unified probabilistic framework for CyTOF data",
-    author="Yuqiu Yang, Kevin Wang, Tao Wang, Xinlei (Sherry) Wang",
-    author_email="yuqiuy@smu.edu, kevinwang@mail.smu.edu, Tao.Wang@UTSouthwestern.edu, xinlei.wang@uta.edu",
+    description=DESCRIPTION,
+    author=AUTHORS,
+    author_email=AUTHOREMAIL,
     long_description_content_type="text/markdown",
     long_description=open("README.md").read(),
     packages=["CytoOne"],
     python_requires=">=3.9,<3.11",
-    install_requires=[
-        "numpy==1.22.4",
-        "pandas==1.5.2",
-        "torch==1.13.1",
-        "pyro-ppl==1.8.6",
-        "matplotlib==3.7.1",
-        "seaborn==0.13.0"
-    ],
+    install_requires=install_requires,
     test_requires=[
         'pytest==7.1.2',
         'coverage==6.3.2',
         'pytest-cov==3.0.0',
-        'pytest-mock==3.10.0'
+        'pytest-mock==3.10.0',
     ],
     classifiers=[
         "Programming Language :: Python :: 3 :: Only",
         "Natural Language :: English",
         "Intended Audience :: Science/Research",
-    ],
-    cmdclass={
-        "pypi": PypiCommand,
-        # "conda": CondaCommand
-    }
+    ]
 )
-
