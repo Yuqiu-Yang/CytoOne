@@ -50,9 +50,17 @@ python setup.py sdist bdist_wheel
 
 You should see a `dist` folder now which contains the wheel file you will need for installing the package. 
 
+Remember to change the `VERSION` to match the file you see in the `dist` folder.
+
 ```shell
 cd ./dist
-pip install ./CytoOne-0.0.1-py3-none-any.whl
+pip install ./CytoOne-VERSION-py3-none-any.whl
+```
+
+Once you have installed the package, you can quickly test if the installation is successful via 
+
+```shell
+python CytoOne -m --version
 ```
 
 
