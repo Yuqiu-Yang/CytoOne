@@ -136,7 +136,7 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
                 gh_x = self.gh_x.view((-1,) + (1,) * value.ndim)  # [n, ...]
                 gh_w = self.gh_w.view((-1,) + (1,) * (value.ndim))  # [n, ...]
                 # If bernoulli is 0 (p) the prob is that of a normal
-                zero_p = (gate.log() + self.zero_normal_log_prob(value=value)).exp()
+                zero_p = gate.log() + self.zero_normal_log_prob(value=value)
                 # If bernoulli is 1 (1-p), gauss hermite with extended support 
                 # for n*p value, this will give us 
                 # d_quadrature * n * p tensor
@@ -145,7 +145,7 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
                 w = torch.where(temp_x>1e-7, gh_w, 0)
                 gh_int = (self.base_dist.log_prob(x).exp()*w).sum(dim=0)/math.sqrt(math.pi)
                 one_p = (-gate).log1p() + (gh_int+1e-7).log()
-                log_prob = (zero_p.exp() + one_p.exp()).log()
+                log_prob = torch.logaddexp(zero_p, one_p)
             else:
                 gate_logits, normal_scale, value = broadcast_all(self.gate_logits, self.normal_scale, value)
                 
@@ -161,7 +161,7 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
                 w = torch.where(temp_x>1e-7, gh_w, 0)
                 gh_int = (self.base_dist.log_prob(x).exp()*w).sum(dim=0)/math.sqrt(math.pi)
                 one_p = -gate_logits -softplus(-gate_logits) + (gh_int+1e-7).log()
-                log_prob = (zero_p.exp() + one_p.exp()).log() 
+                log_prob = torch.logaddexp(zero_p, one_p)
         return log_prob
 
     def sample(self, sample_shape=torch.Size()):
