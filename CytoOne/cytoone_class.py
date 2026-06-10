@@ -128,6 +128,7 @@ class cytoone(nn.Module):
         self.top_gamma = top_gamma
         self.pretrain_gamma = pretrain_gamma
         self.gamma = []
+        self.n_strata = 100
         # if self.anneal_percent <= 0.0:
         #     self.beta = 1.0
         # else:
@@ -355,7 +356,7 @@ class cytoone(nn.Module):
                                         **self.import_data_par)
                 adata_w_batch = new_adata.to_df().copy()
                 adata_w_batch['batch_index'] = new_adata.obs['batch_index'].copy() 
-            splits = np.array_split(adata_w_batch.index, 100)
+            splits = np.array_split(adata_w_batch.index, self.n_strata)
             x_samples = []
             z_samples = []
             for i, row_ind in enumerate(splits):
@@ -396,7 +397,7 @@ class cytoone(nn.Module):
                 x_samples['batch_index'] = target_batch_index
             z_samples = pd.DataFrame(np.concatenate(z_samples, axis=0),
                                      columns=["z"+str(i) for i in range(self.encoder_par['latent_dims'][-1])])
-            z_samples.index = self.adata.obs_names
+            z_samples.index = adata_w_batch.index
             return x_samples, z_samples
                  
     def loss_function(self,
@@ -551,6 +552,7 @@ class cytoone(nn.Module):
         early_stop_pval : float, optional
             p-value used to detect early stopping, by default 1.0
         """
+        self.n_strata = n_strata
         self._training_loop(n_epoches=n_epoches,
                             n_strata=n_strata,
                             early_stop_pval=early_stop_pval,
