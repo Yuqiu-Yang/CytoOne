@@ -41,7 +41,8 @@ class cytoone(nn.Module):
                  pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
                  distribution_type: str="softplus_normal",
-                 model_device: Optional[Union[str, torch.device]] = None) -> None:
+                 model_device: Optional[Union[str, torch.device]] = None,
+                 decoupled_gate: bool=True) -> None:
         """Initialize cytoone object 
 
         Parameters
@@ -97,7 +98,8 @@ class cytoone(nn.Module):
                             "batch_embedding_dim": batch_embedding_dim,  
                             "latent_dims": latent_dims[::-1],
                             "hidden_dims": decoder_hidden_dims,
-                            "drop_out_p": drop_out_p}
+                            "drop_out_p": drop_out_p,
+                            "decoupled_gate": decoupled_gate}
         # Data
         self.adata = None
         self.n_batches = None

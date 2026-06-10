@@ -14,7 +14,8 @@ class Decoder(nn.Module):
                  batch_embedding_dim: int, 
                  latent_dims: list,
                  hidden_dims: list,
-                 drop_out_p: float) -> None:
+                 drop_out_p: float,
+                 decoupled_gate: bool=True) -> None:
         """Initialize decoder
 
         Parameters
@@ -61,14 +62,20 @@ class Decoder(nn.Module):
             ))
             current_d = latent_d*2
         
+        self.decoupled_gate = decoupled_gate
+        if decoupled_gate:
+            n_chunks = 3
+        else:
+            n_chunks = 2
         
         self.recon = nn.Sequential(
             ResidualBlock(in_dim=current_d+batch_embedding_dim,
                             out_dim=current_d+batch_embedding_dim,
                             hidden_dims=hidden_dims[-1],
                             drop_out_p=drop_out_p),
-            nn.Linear(current_d+batch_embedding_dim, 3*input_dim)
+            nn.Linear(current_d+batch_embedding_dim, n_chunks*input_dim)
         )
+
         # Only used for pretrain model 
         self.decoder_elevator = nn.Sequential(
             nn.Linear(latent_dims[0]+batch_embedding_dim, 128),
@@ -80,8 +87,12 @@ class Decoder(nn.Module):
             nn.Linear(256, 512),
             nn.LayerNorm(512),
             nn.GELU(),
-            nn.Linear(512, 3*input_dim)
+            nn.Linear(512, n_chunks*input_dim)
         )
+        
+        self.a_raw = nn.Parameter(torch.zeros(1, input_dim))  # softplus(0)=~0.69
+        self.b     = nn.Parameter(torch.zeros(1, input_dim))  # rho=0.5 at mu=0
+
 
     def forward(self, 
                 z: torch.tensor, 
@@ -140,8 +151,13 @@ class Decoder(nn.Module):
                 zs.append(z)
 
             decoder_out = torch.cat([decoder_out, z, batch_emb], dim=1)
-            
-            x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
+            if self.decoupled_gate:
+                x_mu, x_log_var, x_gate_logit = self.recon(decoder_out).chunk(3, dim=1)
+            else:
+                x_mu, x_log_var = self.recon(decoder_out).chunk(2, dim=1)
+                a = F.softplus(self.a_raw)                  # (1, M), >= 0
+                x_gate_logit = a * x_mu + self.b                 # broadcast -> (batch, M)
+
             return x_mu, x_log_var, x_gate_logit, kl_losses, zs
 
         
