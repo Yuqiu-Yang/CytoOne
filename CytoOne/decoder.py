@@ -127,7 +127,12 @@ class Decoder(nn.Module):
         batch_emb = batch_embedding(batch_index)
         zs = [z]
         if pretrain:
-            direct_x_mu, direct_x_log_var, direct_x_gate_logit = self.decoder_elevator(torch.cat([z, batch_emb], dim=1)).chunk(3, dim=1)
+            if self.decoupled_gate:
+                direct_x_mu, direct_x_log_var, direct_x_gate_logit = self.decoder_elevator(torch.cat([z, batch_emb], dim=1)).chunk(3, dim=1)
+            else:
+                direct_x_mu, direct_x_log_var = self.decoder_elevator(torch.cat([z, batch_emb], dim=1)).chunk(2, dim=1)
+                a = F.softplus(self.a_raw)                  # (1, M), >= 0
+                direct_x_gate_logit = a * direct_x_mu + self.b                 # broadcast -> (batch, M)
             return direct_x_mu, direct_x_log_var, direct_x_gate_logit, [], zs
         else:
             decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
