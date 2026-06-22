@@ -1,0 +1,15 @@
+# Tooling to build the CytoOne documentation on Read the Docs.
+# Heavy runtime deps (torch, pyro, scanpy, scipy, ...) are NOT needed here:
+# they are mocked in conf.py via autodoc_mock_imports.
+
+sphinx>=7,<8
+myst-parser>=2,<3
+linkify-it-py>=2.0          # required by the MyST "linkify" extension
+sphinx-rtd-theme>=2.0
+sphinx-design>=0.5
+sphinx-copybutton>=0.5
+
+# Light libraries imported at module-import time by the package; installing the
+# real (small) wheels keeps autodoc signatures accurate.
+numpy<2.0
+pandas>=2.2.0
