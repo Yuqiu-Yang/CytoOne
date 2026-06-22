@@ -440,7 +440,7 @@ class cytoone(nn.Module):
                 batch_l = mmd_loss(z=z, batch_index=source_batch_index)
                 MMD += batch_l * self.gamma[i]
         else:
-            MMD = torch.zeros(1, dtype=torch.float32)
+            MMD = log_likelihood.new_zeros(1)
 
         return -log_likelihood + KLD + MMD,\
                 log_likelihood.detach().cpu().numpy().item(),\

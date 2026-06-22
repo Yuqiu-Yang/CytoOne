@@ -82,8 +82,9 @@ class QuasiZeroInflatedPositiveDistribution(TorchDistribution):
             self.is_quasi = True
         # Gauss-Hermite nodes and weights (numpy arrays)
         gh_x, gh_w = hermgauss(quadrature_degree)
-        self.gh_x = torch.tensor(gh_x, dtype=torch.float32)  # shape [n]
-        self.gh_w = torch.tensor(gh_w, dtype=torch.float32)  # shape [n]
+        ref = base_dist.base_dist.loc   
+        self.gh_x = torch.tensor(gh_x, dtype=ref.dtype, device=ref.device)  # shape [n]
+        self.gh_w = torch.tensor(gh_w, dtype=ref.dtype, device=ref.device)  # shape [n]
         self.base_dist = base_dist.expand(batch_shape)
         event_shape = torch.Size()
 
