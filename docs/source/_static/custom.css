@@ -1,0 +1,22 @@
+/* Minor CytoOne documentation tweaks on top of the Read the Docs theme. */
+
+/* Slightly roomier content column for wide tables / code. */
+.wy-nav-content {
+    max-width: 960px;
+}
+
+/* Soften inline code so it doesn't shout. */
+code.literal {
+    color: #6f42c1;
+    background: #f6f3fb;
+    border: 1px solid #ece6f6;
+}
+
+/* sphinx-design cards: gentle lift on hover. */
+.sd-card {
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.sd-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}

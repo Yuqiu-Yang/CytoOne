@@ -6,8 +6,9 @@ import sys
 from datetime import datetime
 
 # -- Path setup --------------------------------------------------------------
-# Make the package importable for autodoc (repo root is one level up).
-_REPO_ROOT = os.path.abspath("..")
+# Make the package importable for autodoc (repo root is two levels up:
+# docs/source/conf.py -> docs/source -> docs -> repo root).
+_REPO_ROOT = os.path.abspath("../..")
 sys.path.insert(0, _REPO_ROOT)
 
 
