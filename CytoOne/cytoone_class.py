@@ -259,19 +259,27 @@ class cytoone(nn.Module):
         else:
             normal_scale = torch.exp(0.5*self.noise_log_normal_var)
         
-        x_scale = torch.exp(0.5*x_log_var)
         if self.distribution_type == "softplus_normal":
+            x_scale = torch.exp(0.5*x_log_var)
             x_dists = Independent(QuasiZeroInflatedSoftplusNormal(loc=x_mu,
                                                 scale=x_scale,
                                                 gate_logits=x_gate_logit,
                                                 normal_scale=normal_scale), 0)
 
         elif self.distribution_type == "log_normal":
+            x_scale = torch.exp(0.5*x_log_var)
             x_dists = Independent(QuasiZeroInflatedLogNormal(loc=x_mu,
                                                 scale=x_scale,
                                                 gate_logits=x_gate_logit,
                                                 normal_scale=normal_scale), 0)
         elif self.distribution_type == "normal":
+            x_log_var = torch.nan_to_num(
+                x_log_var,
+                nan=-20.0,
+                posinf=20.0,
+                neginf=-20.0,
+            )
+            x_scale = torch.exp(0.5 * x_log_var)
             x_dists = Independent(Normal(loc=x_mu, scale=x_scale), 0)
         else: 
             raise TypeError("Unknown distribution type")
