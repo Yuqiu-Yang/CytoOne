@@ -118,5 +118,5 @@ html_context = {
     "github_user": "Yuqiu-Yang",
     "github_repo": "CytoOne",
     "github_version": "main",
-    "conf_py_path": "/docs/source/",
+    "conf_py_path": "/docs/",
 }
