@@ -9,7 +9,7 @@ build:
 
 # Build the HTML docs with Sphinx
 sphinx:
-  configuration: docs/conf.py
+  configuration: docs/source/conf.py
   # Set to true once the docs are warning-clean to catch regressions
   fail_on_warning: false
 
