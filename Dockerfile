@@ -56,7 +56,7 @@ RUN pip install -r requirements.txt
 # ---- Install CytoOne itself ------------------------------------------------
 COPY . .
 RUN pip install . \
-    && python -c "import CytoOne; print('CytoOne', CytoOne.__version__.__version__, 'installed OK')"
+    && python -c "import CytoOne; print('CytoOne installed OK')"
 
 # The bundled example dataset is available inside the image at:
 #   /opt/CytoOne/tests/test_data_zi.csv
