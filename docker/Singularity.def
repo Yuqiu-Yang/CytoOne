@@ -1,0 +1,45 @@
+###############################################################################
+# CytoOne — Apptainer / Singularity definition file                           #
+#                                                                             #
+# Many HPC clusters forbid Docker but provide Apptainer (formerly Singularity)#
+# There are two equally valid ways to obtain a .sif image:                    #
+#                                                                             #
+# 1. Pull the pre-built image straight from the registry (no build needed):   #
+#                                                                             #
+#       apptainer pull cytoone.sif \                                          #
+#           docker://ghcr.io/yuqiu-yang/cytoone:latest                        #
+#                                                                             #
+# 2. Build from this definition file (wraps the same Docker image so the      #
+#    environment is identical):                                               #
+#                                                                             #
+#       apptainer build cytoone.sif docker/Singularity.def                    #
+#                                                                             #
+# Run it:                                                                     #
+#                                                                             #
+#       apptainer run cytoone.sif --version                                   #
+#       apptainer run cytoone.sif --help                                      #
+#       apptainer run --bind "$PWD":/work cytoone.sif \                       #
+#           --cell_by_gene /work/counts.csv \                                 #
+#           --cell_metadata /work/meta.csv \                                  #
+#           --batch_index_col batch --celltype_col cell_type \                #
+#           --normalize --zero_inflated --dir_name /work                      #
+#                                                                             #
+# (Replace "singularity" for "apptainer" on older clusters.)                  #
+###############################################################################
+
+Bootstrap: docker
+From: ghcr.io/yuqiu-yang/cytoone:latest
+
+%labels
+    Maintainer  CytoOne authors
+    About       A unified probabilistic framework for CyTOF data
+    Source      https://github.com/Yuqiu-Yang/CytoOne
+
+%help
+    CytoOne container (Apptainer/Singularity).
+    Run `apptainer run cytoone.sif --help` to see the CLI options.
+    The bundled example data lives at /opt/CytoOne/tests inside the image.
+
+%runscript
+    # Forward all arguments to the CytoOne CLI
+    exec python -m CytoOne "$@"

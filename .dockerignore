@@ -1,0 +1,36 @@
+# Version control / CI
+.git
+.gitignore
+.github
+
+# Documentation build artefacts
+docs/_build
+docs/.doctrees
+
+# Large branding assets (not needed at runtime)
+assets
+
+# Python build / cache artefacts
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+build
+dist
+.pytest_cache
+.coverage
+coverage.xml
+.mypy_cache
+.ipynb_checkpoints
+
+# Saved models / generated outputs that may sit in the working tree
+*.pt
+*_meta.json
+*_x_samples.csv
+*_z_samples.csv
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
