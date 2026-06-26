@@ -147,7 +147,7 @@ class cytoone(nn.Module):
         self.sigma_fine = sigma_fine
         self.fine_warmup_frac = fine_warmup_frac
         self.fine_anneal_frac = fine_anneal_frac
-        self.fine_coef
+        self.fine_coef = 0.0
         self.log_interval = 10
         # Monitoring loss 
         self.RECON_list = []
