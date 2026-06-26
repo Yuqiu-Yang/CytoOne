@@ -16,7 +16,7 @@ from CytoOne.encoder import Encoder
 from CytoOne.decoder import Decoder
 from CytoOne.utilities import import_data, generate_strata,\
                              load_stratum, reparameterize, \
-                             kl_standard, mmd_loss, JSONEncoder
+                             kl_standard, mmd_loss, local_mixing_penalty, JSONEncoder
 from CytoOne.basic_distributions import QuasiZeroInflatedSoftplusNormal, QuasiZeroInflatedLogNormal
 # User entertainment
 from tqdm.auto import tqdm 
@@ -41,6 +41,13 @@ class cytoone(nn.Module):
                  pretrain_beta: float=1.0,
                 #  anneal_percent: float=0.0,
                  distribution_type: str="softplus_normal",
+                 weight_mode='uniform',
+                 knn_k=30,
+                 weight_clip=5.0,
+                 gamma_fine=0.1,
+                 sigma_fine=None,
+                 fine_warmup_frac=0.3,
+                 fine_anneal_frac=0.3,
                  model_device: Optional[Union[str, torch.device]] = None,
                  decoupled_gate: bool=True) -> None:
         """Initialize cytoone object 
@@ -133,6 +140,14 @@ class cytoone(nn.Module):
         #     self.beta = 1.0
         # else:
         #     self.beta = 0.0
+        self.weight_mode = weight_mode
+        self.knn_k = knn_k
+        self.weight_clip = weight_clip
+        self.gamma_fine = gamma_fine
+        self.sigma_fine = sigma_fine
+        self.fine_warmup_frac = fine_warmup_frac
+        self.fine_anneal_frac = fine_anneal_frac
+        self.fine_coef
         self.log_interval = 10
         # Monitoring loss 
         self.RECON_list = []
@@ -435,8 +450,19 @@ class cytoone(nn.Module):
             -ELBO, log likelihood, KLD, MMD 
         """
         # Likelihood 
-        log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
-
+        ll_cell = x_dists.log_prob(cell_by_gene_counts).sum(dim=1)         # (N,)
+        if self.weight_mode == 'density':
+            with torch.no_grad():
+                zt = zs[0]                                                 # top-2D latent
+                k = min(self.knn_k, zt.shape[0] - 1)
+                knn = torch.cdist(zt, zt).topk(k + 1, largest=False).values[:, 1:].mean(1)
+                w = (knn / knn.mean()).clamp(max=self.weight_clip)         # up-weight sparse regions
+        else:
+            w = torch.ones_like(ll_cell)
+        log_likelihood = (w * ll_cell).sum() / w.sum()
+        
+        # log_likelihood = x_dists.log_prob(cell_by_gene_counts).sum(dim=1).mean()
+        
         KLD = 0.0
         for i, k in enumerate(kl_losses[::-1]):
             KLD += k * self.beta[i]
@@ -449,6 +475,15 @@ class cytoone(nn.Module):
                 MMD += batch_l * self.gamma[i]
         else:
             MMD = log_likelihood.new_zeros(1)
+        
+        if self.gamma_fine > 0 and self.n_batches > 1 and self.fine_coef > 0:
+            sigma = self.sigma_fine
+            if sigma is None:
+                with torch.no_grad():
+                    d = torch.cdist(zs[0][:512], zs[0][:512]); sigma = d[d > 0].median()
+            MMD = MMD + self.fine_coef * self.gamma_fine * \
+                local_mixing_penalty(zs[0], source_batch_index, self.n_batches, sigma)
+
 
         return -log_likelihood + KLD + MMD,\
                 log_likelihood.detach().cpu().numpy().item(),\
@@ -488,8 +523,12 @@ class cytoone(nn.Module):
         else: 
             self.gamma = [self.pretrain_gamma]
             self.beta = [self.pretrain_beta]
+            
         self.train()
         for epoch in range(n_epoches):
+            warm   = int(self.fine_warmup_frac * n_epoches)
+            anneal = max(1, int(self.fine_anneal_frac * n_epoches))
+            self.fine_coef = float(np.clip((epoch - warm) / anneal, 0.0, 1.0))  
             # For epoch, we randomly suffule the data and stratify 
             adata_w_batch_strata = generate_strata(adata=self.adata,
                                                    n_strata=n_strata)

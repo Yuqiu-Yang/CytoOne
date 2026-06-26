@@ -4,10 +4,12 @@ import json
 # Data manipulation
 import scanpy as sc 
 import numpy as np 
+import math
 import pandas as pd 
 # Torch 
 import torch 
 import torch.nn as nn 
+import torch.nn.functional as F
 # Typing and other info 
 from typing import Optional, Tuple, Union
 from time import perf_counter
@@ -417,6 +419,13 @@ def mmd_loss(z: torch.tensor,
             mmd_sum += mmd
             count += 1
     return mmd_sum / count if count > 0 else 0
+
+
+def local_mixing_penalty(z, batch_index, n_batches, sigma):
+    W = torch.softmax(-(torch.cdist(z, z) ** 2) / (2 * sigma ** 2), dim=1)
+    P = (W @ F.one_hot(batch_index, n_batches).float()).clamp_min(1e-8)
+    H = -(P * P.log()).sum(1)                       # local batch-mixing entropy
+    return (-H).mean() / math.log(n_batches)        # normalized to [-1, 0]                                    # minimize -> maximize local mixing
 
 class JSONEncoder(json.JSONEncoder):
     """This class is used to save dictionary of pd.DataFrame to a json file
