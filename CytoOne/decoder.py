@@ -133,6 +133,7 @@ class Decoder(nn.Module):
                 direct_x_mu, direct_x_log_var = self.decoder_elevator(torch.cat([z, batch_emb], dim=1)).chunk(2, dim=1)
                 a = F.softplus(self.a_raw)                  # (1, M), >= 0
                 direct_x_gate_logit = -(a * direct_x_mu + self.b)                 # broadcast -> (batch, M)
+            direct_x_log_var = direct_x_log_var.clamp(min=-6.0, max=-1)
             return direct_x_mu, direct_x_log_var, direct_x_gate_logit, [], zs
         else:
             decoder_out = torch.zeros(b, w, device=z.device, dtype=z.dtype)
@@ -162,7 +163,7 @@ class Decoder(nn.Module):
                 x_mu, x_log_var = self.recon(decoder_out).chunk(2, dim=1)
                 a = F.softplus(self.a_raw)                  # (1, M), >= 0
                 x_gate_logit = -(a * x_mu + self.b)                 # broadcast -> (batch, M)
-
+            x_log_var = x_log_var.clamp(min=-6.0, max=-1)
             return x_mu, x_log_var, x_gate_logit, kl_losses, zs
 
         
