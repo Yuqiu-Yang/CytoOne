@@ -39,15 +39,8 @@ class cytoone(nn.Module):
                  top_beta: float=0.01,
                  pretrain_gamma: float=1.0,
                  pretrain_beta: float=1.0,
-                #  anneal_percent: float=0.0,
                  distribution_type: str="softplus_normal",
                  weight_mode='uniform',
-                 knn_k=30,
-                 weight_clip=5.0,
-                 gamma_fine=0.1,
-                 sigma_fine=None,
-                 fine_warmup_frac=0.3,
-                 fine_anneal_frac=0.3,
                  model_device: Optional[Union[str, torch.device]] = None,
                  decoupled_gate: bool=True) -> None:
         """Initialize cytoone object 
@@ -136,20 +129,13 @@ class cytoone(nn.Module):
         self.pretrain_gamma = pretrain_gamma
         self.gamma = []
         self.n_strata = 100
-        # if self.anneal_percent <= 0.0:
-        #     self.beta = 1.0
-        # else:
-        #     self.beta = 0.0
+
         self.weight_mode = weight_mode
-        self.knn_k = knn_k
-        self.weight_clip = weight_clip
-        self.gamma_fine = gamma_fine
-        self.sigma_fine = sigma_fine
-        self.fine_warmup_frac = fine_warmup_frac
-        self.fine_anneal_frac = fine_anneal_frac
-        self.fine_coef = 0.0
         self.log_interval = 10
         # Monitoring loss 
+        self.pre_RECON_list = []
+        self.pre_KLD_list = []
+        self.pre_MMD_list = []
         self.RECON_list = []
         self.KLD_list = []
         self.MMD_list = []
@@ -475,14 +461,6 @@ class cytoone(nn.Module):
                 MMD += batch_l * self.gamma[i]
         else:
             MMD = log_likelihood.new_zeros(1)
-        
-        if self.gamma_fine > 0 and self.n_batches > 1 and self.fine_coef > 0:
-            sigma = self.sigma_fine
-            if sigma is None:
-                with torch.no_grad():
-                    d = torch.cdist(zs[0][:512], zs[0][:512]); sigma = d[d > 0].median()
-            MMD = MMD + self.fine_coef * self.gamma_fine * \
-                local_mixing_penalty(zs[0], source_batch_index, self.n_batches, sigma)
 
 
         return -log_likelihood + KLD + MMD,\
@@ -493,7 +471,8 @@ class cytoone(nn.Module):
     def _training_loop(self,
                       n_epoches: int,
                       n_strata: int,
-                      early_stop_pval: float,
+                      window: int,
+                      tol: float,
                       pretrain: bool) -> None:
         """Model training loop 
 
@@ -503,8 +482,6 @@ class cytoone(nn.Module):
             Number of epoches
         n_strata : int, optional
             Number of minibatches per epoch
-        early_stop_pval : float, optional
-            p-value used to detect early stopping
         pretrain : bool, optional
             Whether or not the training is pretraining
         """
@@ -526,25 +503,54 @@ class cytoone(nn.Module):
             
         self.train()
         for epoch in range(n_epoches):
-            warm   = int(self.fine_warmup_frac * n_epoches)
-            anneal = max(1, int(self.fine_anneal_frac * n_epoches))
-            self.fine_coef = float(np.clip((epoch - warm) / anneal, 0.0, 1.0))  
             # For epoch, we randomly suffule the data and stratify 
             adata_w_batch_strata = generate_strata(adata=self.adata,
                                                    n_strata=n_strata)
             RECON_epoch_list = []
             KLD_epoch_list = []
             MMD_epoch_list = []
-            # Starting from the 3rd epoch, we test if convergence has been achieved 
-            if epoch >= 2:
-                RECON_previous_2 = np.array(self.RECON_list[epoch-2])
-                RECON_previous_1 = np.array(self.RECON_list[epoch-1])
-                p_val = ks_2samp(RECON_previous_2, RECON_previous_1).pvalue
-                if p_val > early_stop_pval:
+            # we test if convergence has been achieved 
+            recon_range = 0.0
+            kl_range = 0.0
+            mmd_range = 0.0
+            if epoch >= 2*window:
+                if pretrain:
+                    previous_recon_means = np.array([np.mean(e) for e in self.pre_RECON_list[-2*window:-window]])
+                    previous_KLD_means = np.array([np.mean(e) for e in self.pre_KLD_list[-2*window:-window]])
+                    previous_MMD_means = np.array([np.mean(e) for e in self.pre_MMD_list[-2*window:-window]]) 
+                    recent_recon_means = np.array([np.mean(e) for e in self.pre_RECON_list[-window:]])
+                    recent_KLD_means = np.array([np.mean(e) for e in self.pre_KLD_list[-window:]])
+                    recent_MMD_means = np.array([np.mean(e) for e in self.pre_MMD_list[-window:]]) 
+                else: 
+                    previous_recon_means = np.array([np.mean(e) for e in self.RECON_list[-2*window:-window]])
+                    previous_KLD_means = np.array([np.mean(e) for e in self.KLD_list[-2*window:-window]])
+                    previous_MMD_means = np.array([np.mean(e) for e in self.MMD_list[-2*window:-window]]) 
+                    recent_recon_means = np.array([np.mean(e) for e in self.RECON_list[-window:]])
+                    recent_KLD_means = np.array([np.mean(e) for e in self.KLD_list[-window:]])
+                    recent_MMD_means = np.array([np.mean(e) for e in self.MMD_list[-window:]])
+                recon_range = abs(1-(recent_recon_means.mean()+1e-7)/(previous_recon_means.mean()+1e-7))
+                kl_range = abs(1-(recent_KLD_means.mean()+1e-7)/(previous_KLD_means.mean()+1e-7))
+                mmd_range = abs(1-(recent_MMD_means.mean()+1e-7)/(previous_MMD_means.mean()+1e-7))
+                
+                recon_converged = recon_range < tol
+                kl_converged = kl_range < tol
+                mmd_converged = mmd_range < tol
+                
+                if recon_converged and kl_converged and mmd_converged:
                     print("="*30)
-                    print("No improvement in the reconstruction task detected. Stop early at epoch {}".format(epoch-1))
+                    print("No improvement in the reconstruction, KL, or MMD detected. Stop early at epoch {}".format(epoch-1))
                     print("="*30)
                     break
+                
+                # RECON_previous_2 = np.array(self.RECON_list[epoch-2])
+                # RECON_previous_1 = np.array(self.RECON_list[epoch-1])
+                # p_val = ks_2samp(RECON_previous_2, RECON_previous_1).pvalue
+                # if p_val > early_stop_pval:
+                #     print("="*30)
+                #     print("No improvement in the reconstruction task detected. Stop early at epoch {}".format(epoch-1))
+                #     print("="*30)
+                #     break
+                
             train_loss = 0.0
             for minibatch_ind in range(n_strata):
                 cell_by_gene_counts, source_batch_index, target_batch_index = load_stratum(adata_w_batch_strata=adata_w_batch_strata,
@@ -574,19 +580,30 @@ class cytoone(nn.Module):
 
                 # Print training information 
                 if minibatch_ind % self.log_interval == 0:
-                    print('Train Epoch: {} [{}/{} ({:.0f}%)]tLoss: {:.6f}'.format(
+                    print('Train Epoch: {} [{}/{} ({:.0f}%)]tLoss: {:.6f} Recon: {:.6f} KLD: {:.6f} MMD: {:.6f}'.format(
                             epoch, minibatch_ind, n_strata,
                                 100. * minibatch_ind / n_strata,
-                                loss.item()))
-            print('====> Epoch: {} Average loss: {:.4f}'.format(
-                    epoch, train_loss / n_strata))
-            self.RECON_list.append(np.array(RECON_epoch_list))
-            self.KLD_list.append(np.array(KLD_epoch_list))
-            self.MMD_list.append(np.array(MMD_epoch_list))
+                                loss.item(),
+                                RECON,
+                                KLD, MMD))
+            print('====> Epoch: {} Average loss: {:.4f} Recon change {:.4f}% KLD change {:.4f}% MMD change {:.4f}%'.format(
+                    epoch, train_loss / n_strata, recon_range*100,
+                    kl_range*100, mmd_range*100))
+            if pretrain:
+                self.pre_RECON_list.append(np.array(RECON_epoch_list))
+                self.pre_KLD_list.append(np.array(KLD_epoch_list))
+                self.pre_MMD_list.append(np.array(MMD_epoch_list)) 
+            else:
+                self.RECON_list.append(np.array(RECON_epoch_list))
+                self.KLD_list.append(np.array(KLD_epoch_list))
+                self.MMD_list.append(np.array(MMD_epoch_list))
     
     def training_loop(self,
-                      n_epoches: int=50,
-                      n_strata: int=100,
+                      n_epoches: int=500,
+                      minibatch: Optional[int]=1_000,
+                      n_strata: Optional[int]=None,
+                      window: int=10,
+                      tol: float=0.01,
                       early_stop_pval: float=1.0) -> None:
         """Model training loop
 
@@ -599,14 +616,22 @@ class cytoone(nn.Module):
         early_stop_pval : float, optional
             p-value used to detect early stopping, by default 1.0
         """
-        self.n_strata = n_strata
+        if minibatch is not None:
+            tmp = self.adata.obs.groupby(by=['batch']).size().max()
+            self.n_strata = max(1, -(-tmp // minibatch))
+        elif n_strata is not None: 
+            self.n_strata = n_strata
+        else: 
+            raise Exception("One of minibatch and n_strata should be specified.")
         self._training_loop(n_epoches=n_epoches,
-                            n_strata=n_strata,
-                            early_stop_pval=early_stop_pval,
+                            n_strata=self.n_strata,
+                            window=window,
+                            tol=tol,
                             pretrain=True)
         self._training_loop(n_epoches=n_epoches,
-                            n_strata=n_strata,
-                            early_stop_pval=early_stop_pval,
+                            n_strata=self.n_strata,
+                            window=window,
+                            tol=tol,
                             pretrain=False)
         
     def save_model(self,
