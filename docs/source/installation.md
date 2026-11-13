@@ -1,5 +1,17 @@
 # Installation
 
+## Practical hardware guidance 
+
+The scalability results reported in the manuscript were obtained on a server node equipped with an Intel Xeon Gold 6240 host, 384 GB of system memory, and an NVIDIA V100 GPU with 32 GB of device memory. Absolute runtimes and memory usage are hardware-specific; the benchmark is intended primarily to show scaling with cell number and marker-panel size.
+
+We additionally benchmarked CPU-only CytoOne training on an Apple M3 laptop with 16 GB of memory. Runtime increased from 17.8 seconds at 100,000 cells to 290.6 seconds at 2,000,000 cells, with peak process memory ranging from 1.18 to 3.12 GB. Full model fitting requires multiple epochs and will take proportionally longer. 
+
+### Approximate guidance 
+
+- Small datasets (~100,000 cells): readily handled by the tested CPU-only laptop configuration.
+- Medium datasets (~500,000-1 million cells): feasible on a 16-GB laptop, although full fitting may require substantial wall time.
+- Very large datasets (~1.5-2 million cells): also completed within 16 GB on the tested M3 laptop; GPU or server hardware is recommended when repeated fits or rapid turnaround are required.
+
 CytoOne is tested on **Python 3.9 and 3.10**. Choose whichever route fits your
 environment — for shared / locked-down servers, jump to the
 {ref}`container option <install-container>`.
